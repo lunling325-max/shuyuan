@@ -502,3 +502,65 @@ def test_deleted_paper_does_not_come_back_after_a_restart(client):
 
 def test_delete_unknown_paper_is_404(client):
     assert client.delete("/api/papers/does-not-exist").status_code == 404
+
+
+# ---------------------------------------------------------------- 删除的 Windows 坑
+#
+# 这些用例用独立的临时注册表，不碰上面那个共享的。
+
+
+def test_unlink_retries_a_transient_windows_lock(tmp_path, monkeypatch):
+    """WinError 32 是偶发的（杀毒/索引器在文件刚落地时短暂持有句柄），必须重试。
+
+    踩过的坑：真机上一次 DELETE 返回 500，内存里已经把这篇文章摘掉了，
+    磁盘上的 PDF 还在 —— 重启时"裸 PDF 扫描"把它捞回来，就是"删了又回来"。
+    """
+    from pathlib import Path as _Path
+
+    from app.api import registry as reg_mod
+
+    target = tmp_path / "a.pdf"
+    target.write_bytes(b"%PDF")
+    calls = {"n": 0}
+    real_unlink = _Path.unlink
+
+    def flaky(self, missing_ok=False):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(32, "另一个程序正在使用此文件")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(_Path, "unlink", flaky)
+    monkeypatch.setattr(reg_mod.time, "sleep", lambda _s: None)
+
+    reg_mod._unlink_retry(target)
+
+    assert calls["n"] == 3
+    assert not target.exists()
+
+
+def test_remove_rolls_back_when_the_file_stays_locked(tmp_path, monkeypatch):
+    """实在删不掉时必须**撤销内存里的删除**，并把 sidecar 留在原处。
+
+    宁可整个操作失败、库里状态一致，也不要留下"内存没有、磁盘还在"的幽灵文件。
+    """
+    from app.api import registry as reg_mod
+    from app.api.registry import PaperBusy, PaperRegistry
+
+    reg = PaperRegistry(tmp_path / "store")
+    paper = reg.add(PDF_V7.read_bytes(), PDF_V7.name)
+    meta_path = reg.store_dir / f"{paper.id}.json"
+    assert meta_path.exists()
+
+    def always_busy(_path, **_kwargs):
+        raise PaperBusy("locked")
+
+    monkeypatch.setattr(reg_mod, "_unlink_retry", always_busy)
+
+    with pytest.raises(PaperBusy):
+        reg.remove(paper.id)
+
+    assert reg.get(paper.id) is paper, "删失败要把内存里的那篇放回去"
+    assert meta_path.exists(), "sidecar 不能先删 —— 否则元数据丢了、文件还在"
+    assert paper.path.exists()
+

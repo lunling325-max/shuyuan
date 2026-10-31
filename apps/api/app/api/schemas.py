@@ -65,6 +65,25 @@ class PaperOut(BaseModel):
     duplicate_title: str | None = None
     relation: str | None = Field(default=None, description="identical | new_version | related")
     similarity: float | None = None
+    # 谁更新：只有两份 PDF 的生成日期都取得到才敢判断。
+    # 空串的含义是"不知道"，不是"一样新" —— 前端不许把空串当成"保留现有"。
+    recommendation: str = Field(
+        default="", description="keep_existing | replace_existing | '' (无法判断)"
+    )
+
+
+class BatchItemOut(BaseModel):
+    """批量上传的单条结果：一个文件失败不能拖垮另外九个。
+
+    `ok=false` 时 `error` 一定非空，`paper` 一定为 None —— 前端据此决定
+    是画一行绿色还是红色，不需要再判一次状态码。
+    """
+
+    filename: str
+    ok: bool
+    error: str = ""
+    skipped: bool = Field(default=False, description="因为 on_duplicate=keep 被跳过")
+    paper: PaperOut | None = None
 
 
 class DiffChangeOut(BaseModel):

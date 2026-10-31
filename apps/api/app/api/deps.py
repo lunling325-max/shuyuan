@@ -32,6 +32,21 @@ WEB_DIR = ROOT / "apps" / "web"
 registry = PaperRegistry(STORE_DIR)
 
 
+def recommend_version(new: Paper, old: Paper) -> str:
+    """两份 PDF 谁更新：只看生成日期，取不到就说不知道。
+
+    为什么不用文件名里的 v1/v7：那是作者自己写的，不保证单调
+    （有人 v2 之后又发了 v1.1，也有人在文件名里编号和内容无关）。
+    两份日期都取不到时返回空串 —— 猜错了会把用户手里更新的版本删掉。
+    """
+    if new.created_at and old.created_at:
+        if new.created_at > old.created_at:
+            return "replace_existing"
+        if new.created_at < old.created_at:
+            return "keep_existing"
+    return ""
+
+
 def paper_out(p: Paper, dup: tuple[Paper, Relation] | None = None) -> PaperOut:
     out = PaperOut(
         id=p.id,
@@ -48,6 +63,7 @@ def paper_out(p: Paper, dup: tuple[Paper, Relation] | None = None) -> PaperOut:
         out.duplicate_title = other.title
         out.relation = relation.kind
         out.similarity = relation.similarity
+        out.recommendation = recommend_version(p, other)
     return out
 
 

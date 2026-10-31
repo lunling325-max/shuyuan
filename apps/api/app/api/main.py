@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -34,11 +35,12 @@ from app.api.deps import (
     paper_out,
     registry,
 )
-from app.api.registry import Paper, PaperNotFound
+from app.api.registry import Paper, PaperBusy, PaperNotFound
 from app.config import load_dotenv
 from app.api.schemas import (
     AnchorOut,
     AnswerOut,
+    BatchItemOut,
     BilingualOut,
     BilingualParagraphOut,
     ChunkOut,
@@ -153,9 +155,29 @@ def citation_graph(max_external: int = 24) -> GraphOut:
     )
 
 
-@app.post("/api/papers", response_model=PaperOut, status_code=201)
-async def upload_paper(file: UploadFile = File(...)) -> PaperOut:
-    data = await file.read()
+# on_duplicate 的三种策略。默认 warn 是**不破坏性**的那个：
+# 两个版本都留在库里，让用户自己决定 —— 自动覆盖一旦判错，删掉的是对方的原始文件。
+DUPLICATE_POLICIES = {"warn", "keep", "replace"}
+MAX_BATCH_FILES = 20
+
+
+def _check_policy(on_duplicate: str) -> str:
+    policy = (on_duplicate or "warn").strip().lower()
+    if policy not in DUPLICATE_POLICIES:
+        raise HTTPException(
+            400, f"on_duplicate 只能是 {sorted(DUPLICATE_POLICIES)} 之一，收到 {on_duplicate!r}"
+        )
+    return policy
+
+
+def _ingest(data: bytes, filename: str) -> tuple[Paper, bool]:
+    """校验 + 落盘 + 切块。HTTP 状态码在这里定，批量上传复用同一套判定。
+
+    第二个返回值是"这次上传的字节库里本来就有"。这个区分很关键：
+    重传同一个文件时 `registry.add` 返回的是**库里原来那个对象**，
+    后续若照常执行 on_duplicate=keep 的 `remove(paper.id)`，
+    删掉的就是用户早就传好的那篇。
+    """
     if not data:
         raise HTTPException(400, "文件是空的")
     if len(data) > MAX_UPLOAD_BYTES:
@@ -164,8 +186,9 @@ async def upload_paper(file: UploadFile = File(...)) -> PaperOut:
     if not data.lstrip()[:5].startswith(b"%PDF"):
         raise HTTPException(400, "这不是 PDF 文件")
 
+    identical = registry.lookup(data) is not None
     try:
-        paper = registry.add(data, file.filename or "untitled.pdf")
+        paper = registry.add(data, filename)
     except Exception as exc:  # noqa: BLE001 —— 解析器对坏 PDF 的异常类型不可枚举
         raise HTTPException(422, f"PDF 解析失败：{exc}") from exc
 
@@ -177,8 +200,99 @@ async def upload_paper(file: UploadFile = File(...)) -> PaperOut:
         report = analyze(str(paper.path))
         registry.remove(paper.id)  # 空文档没必要留在库里（三处一起删）
         raise HTTPException(422, f"这份 PDF 里没有抽到可用的正文。{report.note}")
+    return paper, identical
+
+
+@app.post("/api/papers", response_model=PaperOut, status_code=201)
+async def upload_paper(
+    file: UploadFile = File(...), on_duplicate: str = "warn"
+) -> PaperOut:
+    """上传单篇。`on_duplicate` 决定撞上旧版本时怎么办。
+
+    - warn（默认）：两版都入库，响应里带上 duplicate_of / relation / recommendation；
+    - keep：不入库，409 把库里的那篇原样返回，让前端问用户"要不要覆盖"；
+    - replace：删掉库里那一版再入库 —— 这是**破坏性**的，所以必须前端先确认。
+
+    解析放到线程池：541 页的教材要几十秒，同步跑会把这个单进程服务整个卡死，
+    期间连 /api/health 都返回不了（演示现场最容易翻车的地方）。
+    """
+    policy = _check_policy(on_duplicate)
+    data = await file.read()
+    paper, identical = await run_in_threadpool(
+        _ingest, data, file.filename or "untitled.pdf"
+    )
+    if identical:
+        # 同一个文件又传了一次：什么都没变，就别拿"发现相似论文"去吓用户
+        return _paper_out(paper)
+
+    dup = registry.find_similar(paper)
+    if dup is not None and policy == "keep":
+        registry.remove(paper.id)
+        raise HTTPException(
+            409,
+            {
+                "message": "库里已有内容高度重合的版本，按 on_duplicate=keep 未入库",
+                "existing": _paper_out(dup[0]).model_dump(),
+                "uploaded": _paper_out(paper, dup).model_dump(),
+            },
+        )
+    if dup is not None and policy == "replace":
+        registry.remove(dup[0].id)
+        return _paper_out(paper, None)
     # 判定依据是正文语义，不是文件名 —— 官方用例 3.1 明确要求这一点
-    return _paper_out(paper, registry.find_similar(paper))
+    return _paper_out(paper, dup)
+
+
+@app.post("/api/papers/batch", response_model=list[BatchItemOut], status_code=201)
+async def upload_batch(
+    files: list[UploadFile] = File(...), on_duplicate: str = "warn"
+) -> list[BatchItemOut]:
+    """批量上传：逐个处理，**一个失败只影响它自己那一行**。
+
+    为什么不做"全有或全无"：用户一次拖进来 10 个 PDF，其中一个坏了，
+    把另外 9 个已经解析好的结果回滚掉是更糟的体验（重传又要等一遍）。
+    部分成功 + 逐条原因，才是用户真正要的语义。
+    """
+    policy = _check_policy(on_duplicate)
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(413, f"一次最多 {MAX_BATCH_FILES} 个文件")
+
+    items: list[BatchItemOut] = []
+    for upload in files:
+        name = upload.filename or "untitled.pdf"
+        try:
+            data = await upload.read()
+            paper, identical = await run_in_threadpool(_ingest, data, name)
+        except HTTPException as exc:
+            items.append(BatchItemOut(filename=name, ok=False, error=str(exc.detail)))
+            continue
+        except Exception as exc:  # noqa: BLE001 —— 单条失败绝不能拖垮整批
+            items.append(BatchItemOut(filename=name, ok=False, error=f"上传失败：{exc}"))
+            continue
+
+        if identical:
+            items.append(
+                BatchItemOut(filename=name, ok=True, skipped=True, paper=_paper_out(paper))
+            )
+            continue
+
+        dup = registry.find_similar(paper)
+        if dup is not None and policy == "keep":
+            registry.remove(paper.id)
+            items.append(
+                BatchItemOut(
+                    filename=name,
+                    ok=False,
+                    skipped=True,
+                    error=f"库里已有高度重合的版本：{dup[0].title}",
+                )
+            )
+            continue
+        if dup is not None and policy == "replace":
+            registry.remove(dup[0].id)
+            dup = None
+        items.append(BatchItemOut(filename=name, ok=True, paper=_paper_out(paper, dup)))
+    return items
 
 
 @app.get("/api/papers/{paper_id}", response_model=PaperOut)
@@ -198,6 +312,12 @@ def delete_paper(paper_id: str) -> Response:
         registry.remove(paper_id)
     except PaperNotFound as exc:
         raise HTTPException(404, f"没有这篇文献：{paper_id}") from exc
+    except PaperBusy as exc:
+        # 409 而不是 500：这是"稍后再试"（关掉正在看这份 PDF 的阅读器/预览器），
+        # 不是服务器坏了。库里的状态没有被改动，用户可以直接重试。
+        raise HTTPException(
+            409, "这份 PDF 正被别的程序占用（预览器、杀毒扫描都可能导致），稍后重试删除"
+        ) from exc
     return Response(status_code=204)
 
 
@@ -395,11 +515,19 @@ def copilot_outline(req: CopilotOutlineRequest) -> CopilotOutlineOut:
 
 # 按功能拆出去的路由：各自带 APIRouter，这里统一挂载。
 # 放在静态挂载之前，否则 "/" 会先被 StaticFiles 吃掉。
+from app.api.routers import agent as agent_routes  # noqa: E402
+from app.api.routers import dataviz as dataviz_routes  # noqa: E402
 from app.api.routers import review as review_routes  # noqa: E402
+from app.api.routers import stream as stream_routes  # noqa: E402
 from app.api.routers import tools as tool_routes  # noqa: E402
+from app.api.routers import translate as translate_routes  # noqa: E402
 
 app.include_router(tool_routes.router)
 app.include_router(review_routes.router)
+app.include_router(agent_routes.router)
+app.include_router(dataviz_routes.router)
+app.include_router(stream_routes.router)
+app.include_router(translate_routes.router)
 
 
 # 静态前端放在最后挂载：/api 与 /docs 先匹配，剩下的才交给静态文件

@@ -18,6 +18,7 @@ import hashlib
 import json
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +33,31 @@ from app.versioning import Relation, classify, jaccard, shingles
 
 class PaperNotFound(KeyError):
     pass
+
+
+class PaperBusy(OSError):
+    """文件还被别的进程占着，这次删不掉。"""
+
+
+def _unlink_retry(path: Path, *, attempts: int = 6) -> None:
+    """Windows 上删文件会撞 WinError 32（文件被占用），而且是**偶发**的。
+
+    实测：刚上传几秒的文件，删的时候报"另一个程序正在使用此文件"——
+    占着它的不是我们自己的代码（`TextIndex` 读完就 close），而是系统的
+    杀毒扫描/索引器在文件刚落地时短暂持有句柄。Linux 上删已打开的文件
+    从不报错，所以这个坑只有 Windows 开发机会踩到。
+
+    不重试的后果比报错更难看：内存里已经从库里摘掉了，磁盘上的 PDF 还在，
+    下次启动"裸 PDF 扫描"又把它捞回来 —— 用户看到的就是"删了又回来"。
+    """
+    for i in range(attempts):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError as exc:
+            if i == attempts - 1:
+                raise PaperBusy(str(path)) from exc
+            time.sleep(0.12 * (i + 1))
 
 
 def _ocr_hook():
@@ -192,7 +218,14 @@ class PaperRegistry:
             raise PaperNotFound(paper_id)
 
         if paper.path.parent == self.store_dir:
-            paper.path.unlink(missing_ok=True)
+            try:
+                _unlink_retry(paper.path)
+            except PaperBusy:
+                # 删不掉就**撤销内存里的删除**：宁可整个操作失败、库里状态一致，
+                # 也不要留下一份"内存没有、磁盘还在"的幽灵文件
+                with self._lock:
+                    self._papers[paper_id] = paper
+                raise
         (self.store_dir / f"{paper_id}.json").unlink(missing_ok=True)
         # 图谱缓存的键是文档 id 集合，少一篇自然失配，不用手动清
         return paper
@@ -236,6 +269,16 @@ class PaperRegistry:
             built = build_graph(list(self._papers.values()), max_external=max_external)
             self._graph_cache = (key, max_external, built)
             return built
+
+    def lookup(self, data: bytes) -> Paper | None:
+        """这份字节已经入库了就返回那篇，否则 None。
+
+        存在的意义是让**重传同一个文件**和**传一篇新版本**分开：
+        `add` 对内容哈希相同的输入会直接返回库里那篇，调用方若把它当成
+        "刚上传的新对象"再走一遍去重策略，就可能把用户在库里的原始文件删掉。
+        """
+        digest = hashlib.sha256(data).hexdigest()[:12]
+        return self._papers.get(digest)
 
     def get(self, paper_id: str) -> Paper:
         try:
