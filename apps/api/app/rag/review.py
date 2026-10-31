@@ -28,6 +28,8 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Sequence
 
+from app.rag.query import expand_query
+
 if TYPE_CHECKING:  # 只为类型标注，rag 层运行时不要反向依赖 HTTP 层
     from app.api.registry import Paper
 
@@ -55,6 +57,11 @@ FUTURE_MARKERS = (
 
 # "研究空白"是比赛要求必有的章节；英文标题也认，避免模型换个写法就判废
 GAP_MARKERS = ("研究空白", "研究缺口", "research gap")
+
+# 参考文献列表能引用，但当证据毫无意义：它是一串引文，说明不了任何论点。
+# 实测出现过 GPT-4 报告的 References 块被选作证据，前端引用栏里显示的是
+# "[23] Xi Chen, Xiao Wang, ..." —— 技术上确实是原文，但不该出现在综述里。
+REF_LIST_MARKERS = ("references", "bibliography", "参考文献", "reference list")
 
 SYSTEM_PROMPT = """你是严谨的科研综述助手。铁律：
 
@@ -151,11 +158,64 @@ def _year(paper: "Paper") -> str:
     return ""
 
 
-def _search(paper: "Paper", topic: str) -> list:
-    try:
-        return paper.bm25.search(topic, k=PER_PAPER_CHUNKS)
-    except Exception:  # noqa: BLE001 —— 单篇索引坏了不该拖垮整篇综述
-        return []
+def _search(paper: "Paper", queries: Sequence[str]) -> list:
+    """多条检索式各查一次，按块去重后取分数最高的几条。
+
+    为什么要多条：中文主题查英文库时 BM25 基本是 0 召回（E-003 量过），
+    退回"每篇首块"会让所有引用都变成第 1 页的作者与版权声明 —— 那是引用，
+    但完全没有说服力，评委一眼就能看出来这不是检索出来的。
+    """
+    best: dict[int, object] = {}
+    for q in queries:
+        try:
+            hits = paper.bm25.search(q, k=PER_PAPER_CHUNKS)
+        except Exception:  # noqa: BLE001 —— 单篇索引坏了不该拖垮整篇综述
+            continue
+        for hit in hits:
+            if _is_reference_list(hit.chunk):
+                continue  # 引文串不当证据，见 REF_LIST_MARKERS
+            kept = best.get(hit.chunk.index)
+            if kept is None or hit.score > kept.score:
+                best[hit.chunk.index] = hit
+    return sorted(best.values(), key=lambda h: (-h.score, h.chunk.index))[:PER_PAPER_CHUNKS]
+
+
+def _is_front_matter(chunk) -> bool:
+    """第 1 页的标题/作者/版权块：能引用，但作为证据毫无信息量。
+
+    判据刻意保守 —— 只要不是"整块都是人名和版权声明"就放行：
+    正文块通常有句号、有较多 token；前置块往往以作者名开头、几乎不含句号。
+    """
+    text = chunk.text.strip()
+    if getattr(chunk, "n_tokens", 0) >= 120:
+        return False
+    if text.count(".") >= 3:
+        return False
+    low = text.lower()
+    return getattr(chunk, "page_start", 1) == 1 or "copyright" in low or "@" in text
+
+
+def _is_reference_list(chunk) -> bool:
+    """参考文献 / 附录引文串：能引用，但作为论据没有任何信息量。
+
+    有章节名就认名字；没有章节名时看形态 —— 一块里塞了 6 个以上的 `[12]`，
+    基本只可能是引文列表。判据放宽一点没关系：漏掉一块引文只是浪费一次召回，
+    而把引文列表当证据，会让整篇综述的可信度崩塌。
+    """
+    section = (getattr(chunk, "section", "") or "").lower()
+    if any(marker in section for marker in REF_LIST_MARKERS):
+        return True
+    return len(re.findall(r"\[\d{1,3}\]", getattr(chunk, "text", "") or "")) >= 6
+
+
+def _fallback_chunks(paper: "Paper") -> list:
+    """检索 0 召回时的兜底：取第一篇"像正文"的块，而不是第 0 块。"""
+    body = [
+        c
+        for c in paper.chunks
+        if not _is_front_matter(c) and not _is_reference_list(c)
+    ]
+    return (body or paper.chunks)[:PER_PAPER_CHUNKS]
 
 
 def collect_evidence(
@@ -164,19 +224,25 @@ def collect_evidence(
     *,
     max_papers: int = 6,
     limit: int = MAX_EVIDENCE,
+    queries: Sequence[str] | None = None,
 ) -> tuple[list[Evidence], list["Paper"]]:
     """按相关度挑论文与证据块，并按 1..N 编号。
 
     排序规则写死成 (分数, paper_id, chunk.index)，保证同样输入得到同样编号；
     前端把编号回链到原文时，不能因为一次运行顺序不同就跳到别的段落。
+
+    `queries` 允许调用方传入已算好的检索式：build_review 要用同一个
+    llm_call 做扩展（测试里能注入假模型），不能让这里偷偷再打一次网络。
     """
     max_papers = clamp_max_papers(max_papers)
+    # 检索词扩展：中文主题 × 英文库不扩展就是 0 召回。失败自动退回原主题。
+    queries = list(queries) if queries else [topic]
 
     scored: list[tuple[float, "Paper", list]] = []
     for paper in papers:
         if not paper.chunks:
             continue
-        hits = _search(paper, topic)
+        hits = _search(paper, queries)
         if hits:
             scored.append((hits[0].score, paper, hits))
 
@@ -191,10 +257,15 @@ def collect_evidence(
         picked = candidates[:limit]
         chosen_papers = [paper for _best, paper, _hits in selected]
     else:
-        # 中文 topic 查英文库时 BM25 可能 0 召回。没有证据就没有可回填的引用，
-        # 演示会直接白屏，所以退回每篇论文的首块：真实、可引用，相关性不保证。
+        # 扩展之后仍然 0 召回：没有证据就没有可回填的引用，演示会白屏。
+        # 退回"每篇第一篇正文块"——真实、可引用、相关性不保证，但至少不是
+        # 第 1 页的作者名单，读起来还像原文。
         chosen_papers = [p for p in papers if p.chunks][:max_papers]
-        picked = [(0.0, p, p.chunks[0]) for p in chosen_papers][:limit]
+        picked = [
+            (0.0, p, chunk)
+            for p in chosen_papers
+            for chunk in _fallback_chunks(p)[:1]
+        ][:limit]
 
     evidence = [
         Evidence(
@@ -222,7 +293,12 @@ def _future_excerpts(papers: Sequence["Paper"]) -> list[tuple["Paper", object]]:
             for c in paper.chunks
             if any(marker in (c.section or "").lower() for marker in FUTURE_MARKERS)
         ]
-        chosen = matched[:PER_PAPER_CHUNKS] if matched else [paper.chunks[-1]]
+        if matched:
+            chosen = matched[:PER_PAPER_CHUNKS]
+        else:
+            # 论文最后一块几乎总是参考文献，拿它当"未来工作"是自欺欺人
+            usable = [c for c in paper.chunks if not _is_reference_list(c)]
+            chosen = (usable or paper.chunks)[-1:]
         for chunk in chosen:
             key = (paper.id, chunk.index)
             if key in seen:
@@ -386,8 +462,10 @@ def build_review(
     if llm_call is None:
         from app.llm.client import chat_json as llm_call
 
+    # 扩展用同一个 llm_call：测试注入假模型时不会再去碰真网络
+    queries = expand_query(topic, llm_call=llm_call)
     evidence, selected = collect_evidence(
-        papers, topic, max_papers=clamp_max_papers(max_papers)
+        papers, topic, max_papers=clamp_max_papers(max_papers), queries=queries
     )
     paper_refs = [PaperRef(id=p.id, title=p.title, year=_year(p)) for p in selected]
     excerpts = _future_excerpts(selected)

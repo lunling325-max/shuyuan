@@ -215,6 +215,181 @@ def test_build_review_clamps_max_papers_to_upper_bound(monkeypatch):
     assert len(low.papers) == 1
 
 
+def test_zero_recall_falls_back_to_body_chunk_not_page_one():
+    """0 召回时退到"第一篇正文块"，而不是第 0 块。
+
+    这是实测踩出来的坑：中文主题 × 英文库召回 0 条，退回 chunks[0] 之后
+    所有"引用原文"都变成了第 1 页的作者名单和 MIT Press 版权声明 ——
+    技术上是原文，作为证据却毫无信息量。
+    """
+    from app.rag import review as review_mod
+
+    front = SimpleNamespace(
+        index=0,
+        text="Ashish Vaswani, Noam Shazeer. Copyright in this work has been licensed.",
+        section="",
+        page_start=1,
+        page_end=1,
+        n_tokens=12,
+    )
+    body = SimpleNamespace(
+        index=1,
+        text="The Transformer uses self-attention. It dispenses with recurrence entirely.",
+        section="3 Model Architecture",
+        page_start=2,
+        page_end=2,
+        n_tokens=60,
+    )
+    paper = SimpleNamespace(
+        id="p1",
+        title="Attention Is All You Need",
+        created_at="2017-06-12",
+        arxiv_id="",
+        uploaded_at="",
+        chunks=[front, body],
+        bm25=SimpleNamespace(search=lambda q, k=2: []),
+    )
+
+    evidence, selected = review_mod.collect_evidence([paper], "稀疏注意力在长文档里的作用")
+
+    assert [e.n for e in evidence] == [1]
+    assert evidence[0].text == body.text
+    assert selected == [paper]
+
+
+def test_search_merges_queries_and_keeps_best_score_per_chunk():
+    from app.rag.review import _search
+
+    c0, c1 = SimpleNamespace(index=0), SimpleNamespace(index=1)
+    table = {
+        "self-attention": [
+            SimpleNamespace(score=1.0, chunk=c0),
+            SimpleNamespace(score=0.4, chunk=c1),
+        ],
+        "long document": [SimpleNamespace(score=3.0, chunk=c1)],
+    }
+    paper = SimpleNamespace(
+        bm25=SimpleNamespace(search=lambda q, k=2: table.get(q, []))
+    )
+
+    got = _search(paper, ["self-attention", "long document"])
+
+    assert [h.chunk.index for h in got] == [1, 0], "按最高分排序，且同块只留一条"
+    assert got[0].score == 3.0, "同块保留分数更高的那次命中"
+
+
+def test_reference_list_chunks_are_never_used_as_evidence():
+    """参考文献块命中也要丢掉。
+
+    实测里 GPT-4 报告的 References 块被选成了证据，前端引用栏显示
+    "[23] Xi Chen, Xiao Wang, ..." —— 原文没错，但当论据毫无意义。
+    """
+    from app.rag.review import _search
+
+    refs = SimpleNamespace(
+        index=0,
+        section="References",
+        page_start=19,
+        page_end=19,
+        text="[23] Xi Chen, Xiao Wang, Soravit Changpinyo. [24] A. Author. [25] B.",
+    )
+    body = SimpleNamespace(
+        index=1,
+        section="4 Results",
+        page_start=8,
+        page_end=8,
+        text="GPT-4 is a Transformer-style model pre-trained to predict the next token.",
+    )
+    paper = SimpleNamespace(
+        bm25=SimpleNamespace(
+            search=lambda q, k=2: [
+                SimpleNamespace(score=2.0, chunk=refs),
+                SimpleNamespace(score=1.0, chunk=body),
+            ]
+        )
+    )
+
+    got = _search(paper, ["gpt"])
+
+    assert [h.chunk.index for h in got] == [1]
+
+
+def test_future_fallback_skips_a_trailing_reference_list():
+    """Future Work 找不到时退到最后一块正文，不能退到参考文献。"""
+    from app.rag.review import _future_excerpts
+
+    body = SimpleNamespace(
+        index=0, section="Conclusion", text="Limitations remain open for future study."
+    )
+    refs = SimpleNamespace(
+        index=1, section="References", text="[1] A. Author. [2] B. Author. [3] C. Author."
+    )
+    paper = SimpleNamespace(id="p1", title="T", chunks=[body, refs])
+
+    excerpts = _future_excerpts([paper])
+
+    assert [chunk.index for _paper, chunk in excerpts] == [0]
+
+
+def test_search_survives_a_broken_query():
+    """一条检索式把索引查崩了，不能连累其它检索式的结果。"""
+    from app.rag.review import _search
+
+    chunk = SimpleNamespace(index=7)
+    table = {"ok": [SimpleNamespace(score=0.9, chunk=chunk)]}
+
+    def search(q, k=2):
+        if q == "boom":
+            raise RuntimeError("index corrupted")
+        return table.get(q, [])
+
+    got = _search(SimpleNamespace(bm25=SimpleNamespace(search=search)), ["boom", "ok"])
+
+    assert [h.chunk.index for h in got] == [7]
+
+
+def test_build_review_expands_topic_before_searching():
+    """中文主题要先扩展成英文检索式，再拿扩展结果去查库。
+
+    不扩展就等于拿中文字符串去查英文 BM25 —— 0 召回，只能吃兜底块，
+    综述里每条引用都会变成版权声明。
+    """
+    from app.rag.review import build_review
+
+    body = SimpleNamespace(
+        index=3,
+        text="Scaled dot-product attention divides by sqrt(dk).",
+        section="3.2.1",
+        page_start=3,
+        page_end=3,
+        n_tokens=40,
+    )
+    table = {"scaled dot-product attention": [SimpleNamespace(score=2.0, chunk=body)]}
+    paper = SimpleNamespace(
+        id="p1",
+        title="Attention Is All You Need",
+        created_at="2017-06-12",
+        arxiv_id="",
+        uploaded_at="",
+        chunks=[body],
+        bm25=SimpleNamespace(search=lambda q, k=2: table.get(q, [])),
+    )
+
+    asked: list[str] = []
+
+    def llm(user, *, system=None, **kwargs):
+        if user.startswith("Question:"):
+            asked.append(user)
+            return {"queries": ["scaled dot-product attention"]}
+        return {"sections": VALID_SECTIONS, "future": []}
+
+    result = build_review("稀疏注意力", [paper], llm_call=llm)
+
+    assert asked, "必须先做检索词扩展"
+    assert result.references, "扩展后的英文检索式应召回正文块"
+    assert result.references[0].text == body.text
+
+
 def test_future_open_solved_status_is_passed_through(client, monkeypatch):
     future = [
         {"idea": "方向 A", "status": "open", "evidence": [1], "why": "还没人做"},
