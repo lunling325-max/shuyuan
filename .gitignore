@@ -1,0 +1,45 @@
+# ---- 密钥与本地配置（严禁入库）----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ---- 大文件：论文库与运行时数据 ----
+pdf/
+data/
+*.pdf
+!docs/**/*.pdf
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.uv/
+.ruff_cache/
+.pytest_cache/
+
+# ---- Node ----
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+
+# ---- 系统与编辑器 ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ---- 日志与临时 ----
+*.log
+tmp/
+.cache/
+
+# ---- 本机/工具产物（不属于作品代码）----
+models/
+.claude/

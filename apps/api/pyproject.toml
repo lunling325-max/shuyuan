@@ -1,0 +1,34 @@
+[project]
+name = "research-agent-api"
+version = "0.1.0"
+description = "科研助手 Agent 后端：解析 / 检索 / 溯源校验"
+requires-python = ">=3.11"
+dependencies = [
+    "pymupdf>=1.24",
+    # 嵌入推理：刻意不引 torch —— onnxruntime + tokenizers 加起来不到 20MB
+    "onnxruntime>=1.17",
+    "tokenizers>=0.15",
+    "numpy>=1.26",
+    # HTTP 层
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+]
+
+[dependency-groups]
+# 测试依赖单独一组：部署时 `uv sync --no-dev` 不会把 pytest 带进镜像
+dev = ["pytest>=8", "httpx>=0.27"]  # httpx：TestClient 依赖
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# 包名是 research-agent-api，但源码目录叫 app/，必须显式指定，
+# 否则 hatchling 按项目名去找 research_agent_api/ 会构建失败。
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# 国内网络环境：PyPI 官方 CDN 不可达，固定走清华镜像
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
