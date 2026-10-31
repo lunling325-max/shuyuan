@@ -1,0 +1,43 @@
+# 构建上下文瘦身：只保留 Dockerfile 真正 COPY 的依赖清单与源码。
+# 目标是把 128MB 的 models/、PDF 样本、密钥和运行产物挡在镜像之外。
+
+# 版本库与本地配置
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.claude
+.cache
+.idea
+.vscode
+
+# 大文件：本地模型、论文样本、运行时资料库
+models
+pdf
+data
+*.pdf
+*.onnx
+
+# Python 运行产物（源码目录仍会 COPY，但这些不该进上下文）
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.venv
+**/venv
+**/.ruff_cache
+
+# 前端/工具产物
+node_modules
+.next
+dist
+out
+*.log
+tmp
+
+# 文档与设计稿不参与镜像构建
+docs
+prototype
+scripts
+*.md
+!README.md

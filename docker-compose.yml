@@ -1,0 +1,51 @@
+# 一键启动：docker compose up --build -d
+#
+# 只暴露一个服务 `api`：前端是单文件 index.html，由 FastAPI 的 StaticFiles
+# 同源托管，不需要再起 nginx 或 Node 进程。
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 构建期镜像源；可在 shell 或 .env 里覆盖，默认清华源。
+        PYPI_INDEX_URL: "${PYPI_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+    image: research-agent-api:local
+
+    ports:
+      # 默认 8017:8017，与本地开发端口一致。
+      # 两边都用 ${PORT:-8017}，避免只改一边导致"容器在听 A、宿主机映射到 B"。
+      - "${PORT:-8017}:${PORT:-8017}"
+
+    environment:
+      # 应用代码不读 PORT；这里把它传给容器的 CMD，最终变成 uvicorn --port。
+      PORT: "${PORT:-8017}"
+      PAPER_STORE_DIR: /app/data/papers
+
+    env_file:
+      # 允许 .env 不存在：没配 key 时服务仍能启动，只有依赖模型的接口会降级。
+      # required 是 Compose 的长语法，需要 Docker Compose v2.24+。
+      - path: .env
+        required: false
+
+    volumes:
+      # 上传的 PDF 与 sidecar 落在宿主机 ./data，容器重建不丢。
+      - ./data:/app/data
+      # 可选：启用向量检索（--dense / --hybrid）时再挂本地 ONNX 模型；
+      # 不挂也能跑，默认检索路径是纯词法 BM25。
+      # - ./models:/app/models:ro
+
+    restart: unless-stopped
+
+    healthcheck:
+      # 与 Dockerfile 里的 HEALTHCHECK 一致；compose 会读取这里的定义。
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PORT','8017') + '/api/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
