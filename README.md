@@ -18,6 +18,25 @@ uv run uvicorn app.api.main:app --reload --port 8017
 
 - `/docs`　自动生成的 OpenAPI 文档
 - 仓库根放一份 PDF 后，在界面点「＋ 上传 PDF」即可解析入库
+- 演示深链：`/?paper=<文献 id>&ask=<问题>` 直接打开某篇并提问
+
+## 界面
+
+全部截图由 CDP 驱动真实浏览器拍下（`scripts/shoot.py`），不是设计稿。
+
+| 问答：每条结论都带页码与原文 | 流式：草稿区明写"尚未校验" |
+|---|---|
+| ![问答](docs/screenshots/live/14-qa-stream-final.png) | ![流式草稿](docs/screenshots/live/13-qa-stream-draft.png) |
+
+| 上传冲突：说清哪一版更新，覆盖还是保留由人定 | Agent：计划、执行轨迹、可引用原文 |
+|---|---|
+| ![去重冲突](docs/screenshots/live/10-dup-conflict.png) | ![Agent](docs/screenshots/live/12-agent-live.png) |
+
+| CSV → 图 + 数字核验过的图注 | 中译英：公式与引用标号原样保留 |
+|---|---|
+| ![数据可视化](docs/screenshots/live/15-dataviz-server.png) | ![中译英](docs/screenshots/live/16-translate-live.png) |
+
+更多（深色主题、窄屏、引用图谱、版本对比）在同目录 `docs/screenshots/live/`。
 
 ## 目录
 
