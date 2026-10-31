@@ -105,10 +105,19 @@ button{font:inherit;color:inherit;cursor:pointer}
 .brand{display:flex;align-items:center;gap:9px;font-weight:650;letter-spacing:-.01em;white-space:nowrap;flex:none}
 .brand .dot{width:22px;height:22px;border-radius:7px;background:var(--s1);
   display:grid;place-items:center;color:#fff;font-size:var(--fs-xs);font-weight:700}
-nav{display:flex;gap:2px;margin-left:6px}
+/* 横向放不下就滚：宁可滑一下，也不让 tab 压到右边的主题按钮 */
+nav{display:flex;gap:2px;margin-left:6px;overflow-x:auto;scrollbar-width:none}
+nav::-webkit-scrollbar{display:none}
 nav button{
   border:0;background:none;padding:7px var(--sp-3);border-radius:8px;
   color:var(--ink-2);font-size:var(--fs-sm);white-space:nowrap;flex:none;
+  text-align:center;
+}
+/* 宽度够时（≥1060）把三字标签撑到"四个汉字 + 内边距"：文献库 / 阅读器
+   不再比文献检索 / 学术综述窄一截 —— 同一排 tab 就该一样大。
+   窄于此值不撑，撑了就得横向滚动，反而看不全 */
+@media (min-width:1060px){
+  nav button{min-width:76px}
 }
 nav button:hover{background:var(--ring)}
 nav button[aria-selected="true"]{background:var(--wash);color:var(--ink-1);font-weight:600}
@@ -572,7 +581,7 @@ svg{width:100%;height:auto;display:block}
     overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none;
   }
   nav::-webkit-scrollbar{display:none}
-  nav button{padding:6px 9px;font-size:var(--fs-xs)}
+  nav button{padding:6px 9px;font-size:var(--fs-xs);min-width:0}
   .iconbtn{padding:6px 8px}
   .iconbtn .lbl{display:none}
   .view{padding:16px 12px 24px}
@@ -1013,6 +1022,10 @@ svg{width:100%;height:auto;display:block}
       const hash = name === 'library' ? '' : '#' + name;
       if (location.hash !== hash) history.replaceState(null, '', hash || location.pathname);
     }
+    /* 进视图后该做的事（拉图谱 / 载工具 / 聚焦输入框）交给下面那个脚本块。
+       replaceState 不触发 hashchange，所以以前点导航栏进图谱、任务 Agent 时
+       那些只挂在 hashchange 上的加载器一次都没跑过 —— 看上去就是"点了没反应"。 */
+    if (typeof window.__enterView === 'function') window.__enterView(name);
   }
 
   nav.addEventListener('click', e => {
@@ -3627,10 +3640,8 @@ svg{width:100%;height:auto;display:block}
   $('rv-topic')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runReview(); });
 
   $('ag-plan')?.addEventListener('click', () => runAgent('plan'));
-  // 进到这个视图才拉工具清单：它只在演示时才看，没必要拖慢首屏
-  window.addEventListener('hashchange', () => {
-    if (location.hash.slice(1) === 'agent') loadAgentTools();
-  });
+  // 工具清单仍然是"进到这个视图才拉"，但触发点在下面的 enterView()：
+  // 点导航栏走的是 replaceState，不会发 hashchange
   if (location.hash.slice(1) === 'agent') loadAgentTools();
   $('ag-run')?.addEventListener('click', () => runAgent('run'));
   $('ag-task')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent('run'); });
@@ -3696,14 +3707,25 @@ svg{width:100%;height:auto;display:block}
 
   // 图谱按需建：要解析全部参考文献，没必要开机就做
   const maybeLoadGraph = () => { if (location.hash === '#graph') loadGraph(); };
-  const autoCompareOnEnter = () => { if (location.hash === '#version') maybeAutoCompare(); };
-  const autoBilingualOnEnter = () => { if (location.hash === '#compare') ensureCompare(); };
-  $('nav')?.addEventListener('click', maybeLoadGraph);
-  window.addEventListener('hashchange', maybeLoadGraph);
-  $('nav')?.addEventListener('click', autoCompareOnEnter);
-  window.addEventListener('hashchange', autoCompareOnEnter);
-  $('nav')?.addEventListener('click', autoBilingualOnEnter);
-  window.addEventListener('hashchange', autoBilingualOnEnter);
+
+  /* 进视图的统一入口：导航点击、hashchange、方向键切 tab 最后都落到 activate()，
+     由 activate() 调这里。以前每个加载器自己挂 hashchange，只有点导航栏时什么都不发生。 */
+  const VIEW_ENTER = {
+    graph: () => loadGraph(),           // 已建过图就直接复用，不重复请求
+    version: () => maybeAutoCompare(),
+    compare: () => ensureCompare(),
+    agent: () => loadAgentTools(),      // AG.tools 有缓存，进来一次就够
+    // 检索 / 综述是"进来就要打字"的视图：把光标放进输入框，点了立刻有反应
+    retrieve: () => $('arx-q')?.focus(),
+    review: () => $('rv-topic')?.focus(),
+  };
+  function enterView(name) {
+    const view = document.getElementById('view-' + name);
+    if (view) view.scrollTop = 0;        // 各列自己滚，不清就会停在上次的位置
+    const run = VIEW_ENTER[name];
+    if (run) run();
+  }
+  window.__enterView = enterView;
 
   loadPapers();
   maybeLoadGraph();
