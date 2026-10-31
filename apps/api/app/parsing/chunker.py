@@ -47,6 +47,10 @@ ARXIV_STAMP = re.compile(r"arxiv:\d{4}\.\d{4,5}v\d+\s*\[[a-z\-]+\.[a-z]{2}\]", r
 # 那块目录文本本身也会被当成证据召回。目录是导航不是内容，整页不进索引。
 # 实测五份样本：只有 GPT-3 第 2 页命中（16 处），其余每页都是 0，阈值 3 很安全。
 _LEADER_RUN = re.compile(r"(?:\.\s){4,}|\.{5,}")
+# 一页文字层去空白后少于这么多字符，才值得让 OCR 再读一遍。
+# 与 scan.py 的 MIN_PAGE_TEXT_CHARS 同一个数量级，但这里更保守：
+# 宁可少认一页，也不要让 OCR 去覆盖一页本来就有文字的页（OCR 会丢公式和字号）。
+_OCR_MIN_CHARS = 10
 _LETTER = re.compile(r"[A-Za-z]")
 # 页码粘在标题两头：`2 1 Introduction`（页眉）、`1.1 Supervised learning 3`（页脚编号）
 _PAGE_PREFIX = re.compile(r"^\d{1,3}\s+(?=\d+(?:\.\d+)*\.?\s+\S)")
@@ -155,15 +159,47 @@ def _repeats_within(pages: list[int], count: int = 3, window: int = 8) -> bool:
     return False
 
 
-def extract_paras(pdf_path: str) -> tuple[list[Para], int]:
-    """抽出所有自然段，并剔除页眉页脚。返回 (段落列表, 总页数)。"""
+def _page_chars(blocks: list[dict]) -> int:
+    """一页文字层的有效字符数（只算文本块里的 span，空白不算）。
+
+    注意是**字符数**不是词数：`len(text.split())` 数的是词，一行 41 个字符的
+    正文会得到 7 —— 阈值按字符定的时候用错单位，正常页面就会被当成扫描页。
+    """
+    total = 0
+    for block in blocks:
+        if block.get("type") != 0:
+            continue
+        text = "".join(
+            span.get("text", "")
+            for line in block.get("lines", [])
+            for span in line.get("spans", [])
+        )
+        total += len("".join(text.split()))
+    return total
+
+
+def extract_paras(pdf_path: str, *, ocr=None) -> tuple[list[Para], int]:
+    """抽出所有自然段，并剔除页眉页脚。返回 (段落列表, 总页数)。
+
+    `ocr` 是可选钩子：`(page) -> dict | None`，只在某页文字层几乎为空时调用。
+    为什么不在这里直接绑定 Tesseract：切块器是纯解析逻辑，不该知道自己跑在
+    装了 OCR 的机器还是没装的机器上；而且测试能注入假钩子，不必为了跑用例
+    去装一个几 MB 的外部程序。
+    """
     doc = pymupdf.open(pdf_path)
     per_page: list[list[tuple[Para, bool]]] = []  # bool: 是否页边区域
 
     for page_no, page in enumerate(doc, start=1):
         height = page.rect.height or 1.0
         items = []
-        for block in page.get_text("dict")["blocks"]:
+        blocks = page.get_text("dict")["blocks"]
+        if ocr is not None and _page_chars(blocks) < _OCR_MIN_CHARS:
+            # 扫描页：文字层是空的，但版面还在。让 OCR 把那页"读"成带 bbox 的
+            # blocks，后续的标题识别、页眉剔除、坐标高亮就能原样复用。
+            ocr_blocks = ocr(page)
+            if ocr_blocks:
+                blocks = ocr_blocks.get("blocks", [])
+        for block in blocks:
             if block.get("type") != 0:
                 continue
             lines = [
@@ -309,9 +345,9 @@ def _toc_pages(paras: list[Para]) -> set[int]:
     return {page for page, text in joined.items() if len(_LEADER_RUN.findall(text)) >= 3}
 
 
-def chunk_pdf(pdf_path: str) -> list[Chunk]:
-    """把 PDF 切成带章节路径的块。"""
-    paras, _ = extract_paras(pdf_path)
+def chunk_pdf(pdf_path: str, *, ocr=None) -> list[Chunk]:
+    """把 PDF 切成带章节路径的块。`ocr` 见 `extract_paras`。"""
+    paras, _ = extract_paras(pdf_path, ocr=ocr)
     if not paras:
         return []
 

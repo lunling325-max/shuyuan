@@ -57,6 +57,7 @@ from app.api.schemas import (
     GraphOut,
     PaperOut,
     QARequest,
+    ReferenceOut,
     StatsOut,
 )
 from app.rag.answer import answer_question
@@ -169,7 +170,13 @@ async def upload_paper(file: UploadFile = File(...)) -> PaperOut:
         raise HTTPException(422, f"PDF 解析失败：{exc}") from exc
 
     if not paper.chunks:
-        raise HTTPException(422, "这份 PDF 里没有抽到可用的正文（可能是纯扫描件）")
+        # 抽不到正文时别只说"可能是扫描件"：诊断一次，把"几页没有文字层、
+        # 本机能不能 OCR"直接写进错误里，用户才知道下一步该做什么
+        from app.parsing.scan import analyze
+
+        report = analyze(str(paper.path))
+        registry.remove(paper.id)  # 空文档没必要留在库里（三处一起删）
+        raise HTTPException(422, f"这份 PDF 里没有抽到可用的正文。{report.note}")
     # 判定依据是正文语义，不是文件名 —— 官方用例 3.1 明确要求这一点
     return _paper_out(paper, registry.find_similar(paper))
 
@@ -211,6 +218,32 @@ def list_chunks(paper_id: str) -> list[ChunkOut]:
         )
         for c in paper.chunks
     ]
+
+
+@app.get("/api/papers/{paper_id}/scan")
+def scan_report(paper_id: str) -> dict:
+    """这份 PDF 的文字层状况：几页是扫描页、本机能不能 OCR。
+
+    单独一个端点而不是塞进 PaperOut：它要逐页 get_text，541 页的书要一两秒，
+    不该让每次列表请求都付这个钱。前端打开文献时按需拉一次。
+    """
+    from dataclasses import asdict
+
+    from app.parsing.scan import analyze
+
+    paper = _get(paper_id)
+    return asdict(analyze(str(paper.path)))
+
+
+@app.get("/api/papers/{paper_id}/references", response_model=list[ReferenceOut])
+def list_references(paper_id: str) -> list[ReferenceOut]:
+    """参考文献条目，供正文里的 [11] 标记做双向跳转。
+
+    解析不出来的条目**照样返回**（`parsed=false`）：藏起来会让人以为这篇没参考文献，
+    而真相是"我们只认出了标记、没解出标题" —— 前端把 raw 原样显示即可。
+    """
+    paper = _get(paper_id)
+    return [ReferenceOut.of(r) for r in paper.references]
 
 
 @app.get("/api/papers/{paper_id}/bilingual", response_model=BilingualOut)
@@ -358,6 +391,15 @@ def copilot_outline(req: CopilotOutlineRequest) -> CopilotOutlineOut:
         ],
         degraded=result.degraded,
     )
+
+
+# 按功能拆出去的路由：各自带 APIRouter，这里统一挂载。
+# 放在静态挂载之前，否则 "/" 会先被 StaticFiles 吃掉。
+from app.api.routers import review as review_routes  # noqa: E402
+from app.api.routers import tools as tool_routes  # noqa: E402
+
+app.include_router(tool_routes.router)
+app.include_router(review_routes.router)
 
 
 # 静态前端放在最后挂载：/api 与 /docs 先匹配，剩下的才交给静态文件

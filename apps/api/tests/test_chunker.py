@@ -141,3 +141,93 @@ def test_the_papers_own_table_of_contents_is_not_a_section():
     assert not any("Conclusion 40" in s for s in sections)
     assert sections[:2] == ["Language Models are Few-Shot Learners", "Abstract"]
     assert "1 Introduction" in sections[:4]
+
+
+# ---------------------------------------------------------------- 扫描件 OCR 接线
+
+
+def _scanned_pdf(tmp_path: Path, text_pages: int = 0):
+    """造一份"只有图片、没有文字层"的 PDF，用来验证 OCR 钩子真的被调用。
+
+    做法：先在内存里画一页正常文字 → 转成像素图 → 塞进新文档当图片。
+    这样新文档的文字层是空的，和真实扫描件在解析层面等价。
+    """
+    import pymupdf
+
+    out = tmp_path / "scanned.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 120), "This text only exists as pixels.", fontsize=14)
+    pix = page.get_pixmap(dpi=110)
+    doc.close()
+
+    scanned = pymupdf.open()
+    target = scanned.new_page()
+    target.insert_image(target.rect, pixmap=pix)
+    for _ in range(text_pages):
+        normal = scanned.new_page()
+        normal.insert_text((72, 120), "A real text layer on this page.", fontsize=12)
+    scanned.save(str(out))
+    scanned.close()
+    return out
+
+
+def _fake_blocks(text: str) -> dict:
+    """伪造一份 `get_text("dict")` 结构：OCR 钩子该返回的样子。"""
+    return {
+        "blocks": [
+            {
+                "type": 0,
+                "bbox": (60.0, 100.0, 540.0, 140.0),
+                "lines": [
+                    {
+                        "spans": [
+                            {"text": text, "size": 11.0, "bold": False, "flags": 0},
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def test_ocr_hook_is_used_for_pages_without_a_text_layer(tmp_path):
+    """没有文字层的页，注入的 OCR 钩子必须被调用，而且文字要进块。"""
+    pdf = _scanned_pdf(tmp_path)
+    calls = []
+
+    def fake_ocr(page):
+        calls.append(page.number)
+        return _fake_blocks("OCR recovered paragraph about attention windows.")
+
+    chunks = chunk_pdf(str(pdf), ocr=fake_ocr)
+    assert calls, "文字层为空的页没有触发 OCR 钩子"
+    assert any("OCR recovered paragraph" in c.text for c in chunks), [c.text for c in chunks]
+
+
+def test_ocr_hook_is_skipped_when_a_text_layer_exists(tmp_path):
+    """有文字层的页不许走 OCR：OCR 会丢公式、丢字号，反而更差。"""
+    import pymupdf
+
+    pdf = tmp_path / "text.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 120), "A perfectly readable text layer lives here.", fontsize=12)
+    doc.save(str(pdf))
+    doc.close()
+
+    calls = []
+
+    def fake_ocr(page):
+        calls.append(page.number)
+        return _fake_blocks("SHOULD NOT APPEAR")
+
+    chunks = chunk_pdf(str(pdf), ocr=fake_ocr)
+    assert calls == [], "有文字层的页不该调用 OCR"
+    assert all("SHOULD NOT APPEAR" not in c.text for c in chunks)
+
+
+def test_ocr_hook_returning_none_is_not_fatal(tmp_path):
+    """钩子交不出结果（引擎缺失/单页失败）时，这份文档只是没有正文，不该抛异常。"""
+    pdf = _scanned_pdf(tmp_path)
+    assert chunk_pdf(str(pdf), ocr=lambda page: None) == []

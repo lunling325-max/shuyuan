@@ -189,3 +189,30 @@ class CopilotOutlineOut(BaseModel):
     outline: list[CopilotSectionOut]
     references: list[CopilotReferenceOut]
     degraded: bool = Field(description="True=大模型不可用，outline 为空但 references 仍是真实文献")
+
+
+class ReferenceOut(BaseModel):
+    """一条参考文献。`parsed=False` 的条目照样返回 —— 解析不出来是常态，
+    藏起来反而让人以为这篇论文没有参考文献，前端需要显示"这条没解析出标题"。"""
+
+    key: str = Field(description="正文里的引用标记，如 \"12\" 或 \"XDH+19\"")
+    raw: str = Field(description="原始条目文本，解析失败时前端只展示这个")
+    authors: str = ""
+    title: str = Field(default="", description="解析不出就是空串，别编")
+    venue: str = ""
+    year: str = ""
+    arxiv_id: str = ""
+    parsed: bool = Field(default=False, description="False=只认出标记，标题没解出来")
+
+    @classmethod
+    def of(cls, ref) -> "ReferenceOut":
+        return cls(
+            key=ref.key,
+            raw=ref.raw,
+            authors=ref.authors,
+            title=ref.title,
+            venue=ref.venue,
+            year=ref.year,
+            arxiv_id=ref.arxiv_id,
+            parsed=ref.is_parsed,
+        )

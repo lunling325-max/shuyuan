@@ -34,6 +34,18 @@ class PaperNotFound(KeyError):
     pass
 
 
+def _ocr_hook():
+    """有 Tesseract 就把页级 OCR 钩子交给切块器，没有就返回 None。
+
+    在注册表这一层做判断，而不是在切块器里：切块器若直接去找 tesseract，
+    每跑一次单元测试都要依赖本机装没装 OCR 引擎，测试结果就不可复现了。
+    `ocr_enabled()` 带缓存，541 页的教材不会探 541 次子进程。
+    """
+    from app.parsing.scan import ocr_blocks_for_page, ocr_enabled
+
+    return ocr_blocks_for_page if ocr_enabled() else None
+
+
 @dataclass
 class Paper:
     id: str
@@ -48,6 +60,7 @@ class Paper:
     _index: TextIndex | None = field(default=None, repr=False)
     _bm25: BM25 | None = field(default=None, repr=False)
     _fingerprint: set[str] | None = field(default=None, repr=False)
+    _refs: list | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
@@ -62,6 +75,22 @@ class Paper:
                 if self._fingerprint is None:
                     self._fingerprint = shingles(" ".join(c.text for c in self.chunks))
         return self._fingerprint
+
+    @property
+    def references(self) -> list:
+        """参考文献条目（懒解析 + 缓存）。
+
+        竞态说明：这里缓存的是**纯数据**，两个线程同时解析只会得到两份等价列表，
+        后写入的那份胜出即可 —— 不像 chunk.index 那样要求全进程唯一编号，
+        所以不必像 text_index 那样双检加锁。加锁仍然是为了别让同一篇被解析三遍。
+        """
+        if self._refs is None:
+            with self._lock:
+                if self._refs is None:
+                    from app.references import extract_references
+
+                    self._refs = extract_references(self.chunks, self.path)
+        return self._refs
 
     @property
     def text_index(self) -> TextIndex:
@@ -105,7 +134,7 @@ class PaperRegistry:
                 pdf_path = self.store_dir / f"{meta['id']}.pdf"
                 if not pdf_path.exists():
                     continue
-                chunks = chunk_pdf(str(pdf_path))
+                chunks = chunk_pdf(str(pdf_path), ocr=_ocr_hook())
                 if not chunks:
                     continue
                 self._papers[meta["id"]] = Paper(
@@ -130,7 +159,7 @@ class PaperRegistry:
             if pdf_path.stem in self._papers:
                 continue
             try:
-                chunks = chunk_pdf(str(pdf_path))
+                chunks = chunk_pdf(str(pdf_path), ocr=_ocr_hook())
                 if not chunks:
                     continue
                 self._papers[pdf_path.stem] = Paper(
@@ -228,7 +257,7 @@ class PaperRegistry:
         if not path.exists():
             path.write_bytes(data)
 
-        chunks = chunk_pdf(str(path))
+        chunks = chunk_pdf(str(path), ocr=_ocr_hook())
         pages = self._page_count(path)
         title = self._title(path, filename)
         paper = Paper(
