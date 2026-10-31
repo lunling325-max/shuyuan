@@ -25,7 +25,16 @@ from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.registry import Paper, PaperNotFound, PaperRegistry
+from app.api.deps import (
+    STORE_DIR,
+    WEB_DIR,
+    anchor_out,
+    evidence_out,
+    get_paper,
+    paper_out,
+    registry,
+)
+from app.api.registry import Paper, PaperNotFound
 from app.config import load_dotenv
 from app.api.schemas import (
     AnchorOut,
@@ -60,13 +69,8 @@ from app.versioning_summary import DiffSummary, change_to_dict, summarize_diff
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 541 页教材也就 20MB 上下
 ROOT = Path(__file__).resolve().parents[4]
-# 测试用 PAPER_STORE_DIR 指到临时目录，别把测试产生的 PDF 混进真实资料库
-STORE_DIR = Path(os.environ.get("PAPER_STORE_DIR") or ROOT / "data" / "papers")
-WEB_DIR = ROOT / "apps" / "web"
 
 load_dotenv(ROOT / ".env")
-
-registry = PaperRegistry(STORE_DIR)
 
 app = FastAPI(
     title="科研助手 Agent API",
@@ -89,58 +93,15 @@ app.add_middleware(
 
 
 # ------------------------------------------------------------------ 工具
+#
+# 这三个组装函数与 _get 已经搬进 deps.py（新增的路由模块也要用它们）。
+# 这里保留旧名字，是为了让本文件几十处调用点不用一起改 —— 改名是无谓的 churn。
 
 
-def _paper_out(p: Paper, dup: tuple[Paper, Relation] | None = None) -> PaperOut:
-    out = PaperOut(
-        id=p.id,
-        filename=p.filename,
-        title=p.title,
-        pages=p.pages,
-        chunks=len(p.chunks),
-        uploaded_at=p.uploaded_at,
-        created_at=p.created_at,
-    )
-    if dup is not None:
-        other, relation = dup
-        out.duplicate_of = other.id
-        out.duplicate_title = other.title
-        out.relation = relation.kind
-        out.similarity = relation.similarity
-    return out
-
-
-def _anchor_out(a) -> AnchorOut:
-    return AnchorOut(
-        page=a.page,
-        bbox=[round(v, 1) for v in a.rect],
-        source_text=a.source_text,
-        exact=a.exact,
-        similarity=a.similarity,
-        truncated=getattr(a, "truncated", False),
-    )
-
-
-def _evidence_out(hits: list[Hit]) -> list[EvidenceOut]:
-    return [
-        EvidenceOut(
-            rank=i,
-            section=h.chunk.section,
-            page_start=h.chunk.page_start,
-            page_end=h.chunk.page_end,
-            preview=h.chunk.preview(160),
-            score=h.score,
-            source=h.source,
-        )
-        for i, h in enumerate(hits, start=1)
-    ]
-
-
-def _get(paper_id: str) -> Paper:
-    try:
-        return registry.get(paper_id)
-    except PaperNotFound as exc:
-        raise HTTPException(404, f"没有这篇文献：{paper_id}") from exc
+_paper_out = paper_out
+_anchor_out = anchor_out
+_evidence_out = evidence_out
+_get = get_paper
 
 
 # ------------------------------------------------------------------ 路由
