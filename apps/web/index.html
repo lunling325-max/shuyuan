@@ -168,6 +168,28 @@ h1{font-size:var(--fs-xl);margin:0 0 2px;letter-spacing:-.015em}
   display:flex;gap:22px;margin:10px 0 var(--sp-3);font-size:var(--fs-sm);color:var(--ink-2);
 }
 .alert .cmp b{color:var(--ink-1);font-weight:600}
+.alert .acts{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3)}
+.alert .hint{
+  margin-top:9px;font-size:var(--fs-xs);color:var(--ink-3);
+  border-left:2px solid var(--hair);padding-left:9px;
+}
+
+/* 批量上传结果：一行一个文件，失败的行不能藏起来 */
+.batch{margin-bottom:var(--sp-4);padding:var(--sp-3) var(--sp-4)}
+.batch h3{margin:0 0 9px;font-size:var(--fs-sm);font-weight:640}
+.batch .row{
+  display:flex;gap:10px;align-items:baseline;padding:7px 0;
+  border-top:1px solid var(--hair);font-size:var(--fs-xs);
+}
+.batch .row:first-of-type{border-top:0}
+.batch .row .name{
+  flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:var(--mono);color:var(--ink-2);
+}
+.batch .row .st{flex:none;font-variant-numeric:tabular-nums}
+.batch .row.ok .st{color:var(--ok,#1a7f4b)}
+.batch .row.bad .st{color:var(--warn)}
+.batch .row .why{flex:none;max-width:52%;color:var(--ink-3)}
 .chip{
   display:inline-block;padding:1px 7px;border-radius:5px;font-size:var(--fs-xs);
   background:var(--ring);color:var(--ink-2);font-variant-numeric:tabular-nums;
@@ -264,7 +286,9 @@ mark{
 .q{align-self:flex-end;background:var(--wash);border-radius:11px 11px 3px 11px;
   padding:9px var(--sp-3);font-size:var(--fs-sm);max-width:88%}
 .a{font-size:var(--fs-sm);line-height:1.6}
-.a .think{
+/* 不挂在 .a 下面：这行"检索 N 块 · 通过/拦截"是挂在回答气泡外的状态条，
+   写死成后代选择器的话它根本匹配不到，就变成一行没样式的裸字 */
+.think{
   font-size:var(--fs-xs);color:var(--ink-3);border-left:2px solid var(--hair);
   padding-left:9px;margin-bottom:var(--sp-2);font-variant-numeric:tabular-nums;
 }
@@ -285,6 +309,23 @@ mark{
   padding:0;font-weight:560;
 }
 .cite .go:hover{text-decoration:underline}
+/* 流式草稿区：虚线框 + 弱化字色 —— 它和下面的正式结论必须一眼能分开，
+   否则用户会把还没校验的模型原话当成"已溯源"的答案 */
+.draft{
+  border:1px dashed var(--hair);border-radius:10px;padding:10px var(--sp-3);
+  background:var(--surface-2);
+}
+.draft .draftline{
+  font-size:var(--fs-sm);line-height:1.6;color:var(--ink-2);white-space:pre-wrap;
+}
+/* "本次检索到的原文块"每一行：节名会折行，分数必须留在同一行右侧，
+   不然分数会被挤到下一行开头，看起来像另一条的编号 */
+.evrow{display:flex;gap:8px;align-items:baseline}
+.evrow a{flex:1;min-width:0}
+.evrow .mono{flex:none;font-variant-numeric:tabular-nums}
+.caret{color:var(--s1);animation:caret-blink 1.05s steps(1) infinite}
+@keyframes caret-blink{50%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.caret{animation:none}}
 .ai .foot{border-top:1px solid var(--hair);padding:11px}
 .composer{
   display:flex;gap:var(--sp-2);align-items:center;border:1px solid var(--hair);
@@ -418,8 +459,69 @@ svg{width:100%;height:auto;display:block}
 .bar-val{grid-area:val;font-size:var(--fs-xs);color:var(--ink-2);font-variant-numeric:tabular-nums;text-align:right}
 
 /* ============ Copilot ============ */
-.copilot{display:grid;grid-template-columns:1fr 1fr;gap:14px;height:100%}
-.copilot .col{overflow:auto;padding:16px}
+.copilot{display:grid;grid-template-columns:1fr 1fr;gap:14px;height:auto;min-height:100%}
+/* 四块卡片已经比一屏高了：让整页往下滚，而不是每张卡各抠一条小滚动条 ——
+   图被裁掉一半再让人在小窗里滚，比直接往下滚难用得多 */
+.copilot .col{overflow:visible;padding:16px}
+#view-copilot.active{overflow:auto}
+/* 中译英：左输入右输出。输入框给足高度，别让人在 3 行的框里改一整段摘要 */
+.tr-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tr-grid textarea{
+  width:100%;height:210px;resize:vertical;box-sizing:border-box;
+  border:1px solid var(--hair);border-radius:10px;background:var(--surface-2);
+  color:var(--ink-1);font:inherit;font-size:var(--fs-sm);line-height:1.65;padding:11px 12px;
+}
+.tr-grid textarea:focus{outline:2px solid var(--s1);outline-offset:-1px}
+.tr-out{
+  height:210px;overflow:auto;border:1px solid var(--hair);border-radius:10px;
+  background:var(--surface-2);padding:11px 12px;font-size:var(--fs-sm);line-height:1.65;
+}
+.tr-out .para{margin:0 0 10px}
+.tr-out .src{color:var(--ink-3);font-size:var(--fs-xs);margin:2px 0 0}
+/* 检索与综述：结构跟 Copilot 一样是"左操作 + 右证据"，只是列宽不同 ——
+   检索的结果条目比较宽，综述的引用栏要能竖着排很多条 */
+/* 结果条目是可增长的，卡片不该撑满整屏留一大片空白：让整列滚，卡片按内容长 */
+.retrieve{height:100%;overflow:auto}
+.retrieve .col{padding:16px}
+.review{display:grid;grid-template-columns:1fr 1fr;gap:14px;height:100%}
+.review .col{overflow:auto;padding:16px}
+.agent{display:grid;grid-template-columns:1fr 1fr;gap:14px;height:100%}
+.agent .col{overflow:auto;padding:16px}
+/* 计划：编号用等宽数字，工具名单独着色 —— 扫一眼就能看出"第几步、调了什么" */
+.plan{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.plan li{display:flex;gap:10px;align-items:flex-start}
+.plan .n{
+  flex:none;width:20px;height:20px;border-radius:6px;display:grid;place-items:center;
+  background:var(--ring);color:var(--ink-2);font-size:var(--fs-xs);
+  font-variant-numeric:tabular-nums;margin-top:1px;
+}
+.plan .body{min-width:0;flex:1}
+.plan .t{font-family:var(--mono);font-size:var(--fs-xs);color:var(--s1);font-weight:600}
+.plan .a{font-family:var(--mono);font-size:var(--fs-xs);color:var(--ink-3);word-break:break-all}
+.plan .why{color:var(--ink-2);font-size:var(--fs-xs);line-height:1.55;margin-top:3px}
+.plan .drop{color:var(--warn);font-size:var(--fs-xs);margin-top:2px}
+/* 轨迹：一行一步，失败的整行染色，别只靠一个小图标 */
+.trace{border:1px solid var(--hair);border-radius:10px;overflow:hidden;background:var(--surface-2)}
+.trace .trow{display:flex;gap:9px;align-items:baseline;padding:8px 11px;border-top:1px solid var(--hair);font-size:var(--fs-xs)}
+.trace .trow:first-child{border-top:0}
+.trace .trow.bad{background:rgba(250,178,25,.09)}
+.trace .trow .t{font-family:var(--mono);color:var(--ink-1);flex:none}
+.trace .trow .ms{margin-left:auto;color:var(--ink-3);font-variant-numeric:tabular-nums;flex:none}
+.trace .obs{color:var(--ink-2);line-height:1.55;word-break:break-word}
+.tools{display:flex;flex-wrap:wrap;gap:7px}
+.tool{
+  border:1px solid var(--hair);border-radius:8px;padding:6px 9px;background:var(--surface-2);
+  font-size:var(--fs-xs);cursor:help;
+}
+.tool b{font-family:var(--mono);font-weight:600;color:var(--ink-1)}
+.tool span{display:block;color:var(--ink-3);margin-top:2px}
+/* 检索结果：一条一张卡，标题可点开原文，按钮靠右 */
+.hitrow{border:1px solid var(--hair);border-radius:10px;padding:11px 13px;background:var(--surface-2)}
+.hitrow h4{margin:0 0 4px;font-size:var(--fs-sm);line-height:1.45}
+.hitrow .meta{font-size:var(--fs-xs);color:var(--ink-3);margin-bottom:6px}
+.hitrow .abs{font-size:var(--fs-xs);color:var(--ink-2);line-height:1.55;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.hitrow .act{display:flex;gap:var(--sp-2);align-items:center;margin-top:9px}
 .docline{height:9px;border-radius:4px;background:var(--hair);margin:7px 0}
 .docline.w80{width:80%}.docline.w60{width:60%}.docline.w90{width:90%}.docline.w45{width:45%}
 .docline.t{height:13px;background:var(--axis)}
@@ -431,6 +533,9 @@ svg{width:100%;height:auto;display:block}
   *{transition:none !important}
 }
 .figure{border:1px solid var(--hair);border-radius:9px;padding:14px;background:var(--surface-2)}
+/* 服务端返回的 SVG 带 viewBox、不带 width/height：不显式给宽度的话，
+   内联 SVG 会退回 300×150 的默认尺寸，图被裁掉一大半 */
+.figure svg{width:100%;height:auto;display:block}
 .caption{font-size:var(--fs-xs);color:var(--ink-3);margin-top:10px;line-height:1.5}
 
 /* 表格横向滚动容器：窄屏下不挤压列宽 */
@@ -492,6 +597,9 @@ svg{width:100%;height:auto;display:block}
     <button data-v="version" role="tab" aria-controls="view-version" aria-selected="false">版本谱系</button>
     <button data-v="compare" role="tab" aria-controls="view-compare" aria-selected="false">中英对照</button>
     <button data-v="graph" role="tab" aria-controls="view-graph" aria-selected="false">引用图谱</button>
+    <button data-v="retrieve" role="tab" aria-controls="view-retrieve" aria-selected="false">文献检索</button>
+    <button data-v="review" role="tab" aria-controls="view-review" aria-selected="false">学术综述</button>
+    <button data-v="agent" role="tab" aria-controls="view-agent" aria-selected="false">任务 Agent</button>
     <button data-v="copilot" role="tab" aria-controls="view-copilot" aria-selected="false">写作 Copilot</button>
   </nav>
   <div class="spacer"></div>
@@ -507,7 +615,7 @@ svg{width:100%;height:auto;display:block}
 
   <div class="toolbar">
     <button class="btn primary" id="upload-btn">＋ 上传 PDF</button>
-    <input type="file" id="upload-input" accept="application/pdf,.pdf" hidden>
+    <input type="file" id="upload-input" accept="application/pdf,.pdf" multiple hidden>
     <input class="search" type="search" aria-label="搜索文献标题或文件名" placeholder="搜索标题或文件名…">
     <div class="spacer"></div>
     <button class="btn" id="refresh-btn">刷新</button>
@@ -515,6 +623,7 @@ svg{width:100%;height:auto;display:block}
 
   <p class="note" id="upload-status" hidden></p>
   <div class="alert" id="dup-alert" hidden></div>
+  <div class="card batch" id="batch-list" hidden></div>
 
   <div class="card table-wrap">
     <table>
@@ -687,6 +796,108 @@ svg{width:100%;height:auto;display:block}
   </div>
 </section>
 
+<!-- ==================== 文献检索（arXiv）==================== -->
+<section class="view fill" id="view-retrieve" role="tabpanel" aria-label="文献检索">
+  <div class="retrieve">
+    <div class="card col">
+      <h1 style="font-size:var(--fs-lg)">从 arXiv 检索并入库</h1>
+      <p class="sub">检索 → 下载 → 解析入库，全程可看到每一步；同一份 PDF 按内容哈希去重，不会进两份</p>
+      <div class="bar" style="margin-bottom:var(--sp-3)">
+        <div class="composer" style="flex:1">
+          <input id="arx-q" aria-label="检索 arXiv" placeholder="比如：sparse attention long document retrieval">
+        </div>
+        <label class="pick">条数 <select id="arx-limit" aria-label="返回条数">
+          <option>3</option><option selected>5</option><option>8</option>
+        </select></label>
+        <button class="btn primary" id="arx-run">检索</button>
+      </div>
+      <span class="sub" id="arx-state" style="margin:0"></span>
+      <div id="arx-out" style="margin-top:14px">
+        <p class="note" style="margin:0">输入关键词后点「检索」。入库的论文会立刻出现在文献库里。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 学术综述 ==================== -->
+<section class="view fill" id="view-review" role="tabpanel" aria-label="学术综述">
+  <div class="review">
+    <div class="card col">
+      <h1 style="font-size:var(--fs-lg)">领域综述 + 未来方向</h1>
+      <p class="sub">先检索库里真实原文，再让模型按证据写；编号与原文都由服务端回填，模型编的编号直接丢弃</p>
+      <div class="bar" style="margin-bottom:var(--sp-3)">
+        <div class="composer" style="flex:1">
+          <input id="rv-topic" aria-label="综述主题" placeholder="比如：稀疏注意力在长文档检索中的应用">
+        </div>
+        <label class="pick">论文数 <select id="rv-max" aria-label="最多用几篇">
+          <option>4</option><option selected>6</option><option>8</option><option>12</option>
+        </select></label>
+        <button class="btn primary" id="rv-run">生成综述</button>
+      </div>
+      <span class="sub" id="rv-state" style="margin:0"></span>
+      <div id="rv-out" style="margin-top:14px">
+        <p class="note" style="margin:0">给一个主题，点「生成综述」。每个要点的编号都能点回原文。</p>
+      </div>
+    </div>
+    <div class="card col" style="grid-row:span 2">
+      <h1 style="font-size:var(--fs-lg)">本次引用的原文</h1>
+      <p class="sub">综述里出现的每条引用都来自这里 —— 编号是检索到你库里的块</p>
+      <div id="rv-refs">
+        <p class="note" style="margin:0">还没生成。左边跑一次，这里会列出这次真正用到的原文。</p>
+      </div>
+    </div>
+    <div class="card col">
+      <h1 style="font-size:var(--fs-lg)">未来方向</h1>
+      <p class="sub">从各篇的 Future Work / Limitations 里提炼；标成「已被解决」的是模型判断，需要人工复核</p>
+      <div id="rv-future">
+        <p class="note" style="margin:0">生成综述后，这里列出 open / solved 两个状态的方向。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 任务 Agent（规划 + 工具调用）==================== -->
+<section class="view fill" id="view-agent" role="tabpanel" aria-label="任务 Agent">
+  <div class="agent">
+    <div class="card col">
+      <h1 style="font-size:var(--fs-lg)">Agent 任务规划与执行</h1>
+      <p class="sub">一句话任务 → 先出计划（每步写清为什么）→ 逐步调工具，观测喂回模型再决定下一步</p>
+      <div class="composer" style="margin-bottom:var(--sp-3)">
+        <input id="ag-task" aria-label="输入任务"
+               placeholder="示例：库里哪篇论文是被引用最多的基石论文？给出可引用的原文依据"
+               style="font-size:var(--fs-sm)">
+      </div>
+      <div style="display:flex;gap:var(--sp-2);align-items:center;flex-wrap:wrap;margin-bottom:18px">
+        <button class="btn" id="ag-plan">只规划</button>
+        <button class="btn primary" id="ag-run">规划并执行</button>
+        <span class="sub" id="ag-state" style="margin:0"></span>
+      </div>
+      <h1 style="font-size:var(--fs-md);margin:0 0 10px">计划</h1>
+      <div id="ag-plan-out">
+        <p class="note" style="margin:0">还没有计划。点「只规划」看看它打算怎么做，点「规划并执行」看它真的做完。</p>
+      </div>
+      <h1 style="font-size:var(--fs-md);margin:22px 0 10px">结论</h1>
+      <div id="ag-answer">
+        <p class="note" style="margin:0">执行完成后，这里给出结论。结论里不写引用原文 —— 引用放在右栏，能点回原文。</p>
+      </div>
+    </div>
+
+    <div class="card col">
+      <h1 style="font-size:var(--fs-lg)">工具箱</h1>
+      <p class="sub">工具名与参数由服务端校验；模型编出来的工具名、参数不合法的步骤会被丢弃并记进轨迹</p>
+      <div id="ag-tools"><p class="note" style="margin:0">正在读取工具清单…</p></div>
+
+      <h1 style="font-size:var(--fs-lg);margin-top:22px">执行轨迹</h1>
+      <p class="sub">每一步的工具、耗时、观测预览。被丢弃的步骤也留在这里 —— 拦下来什么，比藏起来更有说服力</p>
+      <div id="ag-trace"><p class="note" style="margin:0">还没有执行记录。</p></div>
+
+      <h1 style="font-size:var(--fs-lg);margin-top:22px">可引用的原文</h1>
+      <p class="sub">结论里每条引用都来自这里 —— 编号与原文由服务端回填，模型只给指针</p>
+      <div id="ag-evidence"><p class="note" style="margin:0">执行完成后，这里列出这次真正用到的原文块。</p></div>
+    </div>
+  </div>
+</section>
+
 <!-- ==================== Copilot ==================== -->
 <section class="view fill" id="view-copilot" role="tabpanel" aria-label="写作 Copilot">
   <div class="copilot">
@@ -716,20 +927,62 @@ svg{width:100%;height:auto;display:block}
 
     <div class="card col" id="viz-card">
       <h1 style="font-size:var(--fs-lg)">数据可视化</h1>
-      <p class="sub">上传 CSV → 生成图表 + 学术规范图注（第一列当类别，第二列当数值）</p>
+      <p class="sub">上传 CSV → 统计表 + SVG 图 + 学术图注。图注里的每个数字都要在统计卡里核实过，编造的会被标出来</p>
       <div style="display:flex;gap:var(--sp-2);align-items:center;margin-bottom:14px;flex-wrap:wrap">
         <button class="btn" id="viz-upload">选择 CSV</button>
         <button class="btn" id="viz-demo">用示例数据</button>
         <input type="file" id="viz-input" accept=".csv,text/csv" hidden>
+        <label class="pick">图表
+          <select id="viz-kind" aria-label="图表类型">
+            <option value="">自动判断</option>
+            <option value="bar">柱状</option>
+            <option value="line">折线</option>
+            <option value="scatter">散点</option>
+            <option value="radar">雷达</option>
+          </select>
+        </label>
         <span class="sub" id="viz-state" style="margin:0"></span>
       </div>
       <div class="figure">
         <div id="viz-chart">
-          <p class="note" style="margin:0">还没有数据。选一个 CSV（第一列类别，第二列数值），或者先用示例数据看看效果。</p>
+          <p class="note" style="margin:0">还没有数据。选一个 CSV —— 数值列、日期列会自动认出来，也可以先点「用示例数据」看看整条链路。</p>
         </div>
         <p class="caption" id="viz-caption"></p>
       </div>
-      <button class="btn" id="viz-export" style="margin-top:14px" disabled>导出 SVG + 学术图注</button>
+      <div id="viz-caption-note"></div>
+      <div style="display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:14px">
+        <button class="btn" id="viz-export" disabled>导出 SVG + 学术图注</button>
+        <!-- 源码导出要等服务端出图后才有内容，所以先藏起来 -->
+        <button class="btn" id="viz-mermaid" hidden>Mermaid</button>
+        <button class="btn" id="viz-tikz" hidden>TikZ</button>
+        <button class="btn" id="viz-mpl" hidden>Matplotlib</button>
+      </div>
+    </div>
+
+    <div class="card col" id="tr-card" style="grid-column:1 / -1">
+      <h1 style="font-size:var(--fs-lg)">中文 → 英文</h1>
+      <p class="sub">贴中文摘要或正文小节，逐段译成英文。公式、代码、引用标号必须原样保留 —— 哪一段没保住，那一段就退回原文并标出来，而不是悄悄放过</p>
+      <div class="tr-grid">
+        <div>
+          <textarea id="tr-in" spellcheck="false"
+            placeholder="示例：我们提出一种以稀疏注意力为基础的文档编码器，在 541 页教材上把长文档检索的延迟降低了 38%，同时保持 92% 的命中率。"></textarea>
+          <div class="note" id="tr-count" style="margin:6px 0 0">0 / 20000 字</div>
+        </div>
+        <div id="tr-out" class="tr-out">
+          <p class="note" style="margin:0">译文出在这里，按段落对齐。</p>
+        </div>
+      </div>
+      <div style="display:flex;gap:var(--sp-2);align-items:center;margin-top:12px;flex-wrap:wrap">
+        <label class="pick">文体
+          <select id="tr-style" aria-label="文体">
+            <option value="abstract">论文摘要</option>
+            <option value="section">正文小节</option>
+          </select>
+        </label>
+        <button class="btn primary" id="tr-run">翻译</button>
+        <button class="btn" id="tr-copy" disabled>复制译文</button>
+        <span class="sub" id="tr-state" style="margin:0"></span>
+      </div>
     </div>
   </div>
 </section>
@@ -741,7 +994,8 @@ svg{width:100%;height:auto;display:block}
   /* ---------------------------------------------------------------- 视图路由
      hash 路由：刷新、直接粘贴链接、后退都能回到同一个视图。
      这也让自动截图可以逐屏定位（#reader / #graph …）。 */
-  const VIEWS = ['library', 'reader', 'version', 'compare', 'graph', 'copilot'];
+  const VIEWS = ['library', 'reader', 'version', 'compare', 'graph', 'retrieve', 'review',
+    'agent', 'copilot'];
   const nav = document.getElementById('nav');
   const viewEls = [...document.querySelectorAll('.view')];
   const main = document.querySelector('main');
@@ -807,6 +1061,11 @@ svg{width:100%;height:auto;display:block}
     root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
     store.set('theme', root.dataset.theme);
     syncThemeLabel();
+    // 服务端图的配色是画进 SVG 里的，切主题得请后端按新主题重画一版，
+    // 否则深色页面上会嵌着一张白底图。
+    // 页面分两段脚本：主题在这段，图表在那段，彼此看不见对方的变量，
+    // 所以走一个挂在 window 上的钩子（没装钩子时就是空操作）。
+    window.__onThemeChange?.();
   });
 
   /* ---------------------------------------------------------------- 文献库表
@@ -904,9 +1163,18 @@ svg{width:100%;height:auto;display:block}
   async function api(path, options) {
     const res = await fetch(API + path, options);
     if (!res.ok) {
-      let detail = res.statusText;
-      try { detail = (await res.json()).detail || detail; } catch { /* 非 JSON 错误体 */ }
-      throw new Error(detail);
+      // detail 可能是字符串，也可能是结构化对象（409 去重冲突就带
+      // {message, existing, uploaded}）。两种情况都要能拿到人话，
+      // 而且原始 detail 要跟着 Error 走 —— 界面要靠它画"覆盖 / 保留"按钮。
+      let text = res.statusText;
+      let detail = null;
+      try { detail = (await res.json()).detail ?? null; } catch { /* 非 JSON 错误体 */ }
+      if (typeof detail === 'string') text = detail;
+      else if (detail && typeof detail === 'object') text = detail.message || text;
+      const err = new Error(text);
+      err.status = res.status;
+      err.detail = detail;
+      throw err;
     }
     return res.status === 204 ? null : res.json();
   }
@@ -1094,8 +1362,19 @@ svg{width:100%;height:auto;display:block}
       : pair.same ? '' : '库里还没有同一篇的两个版本，下面默认挑的是任意两篇';
   }
 
+  /** 谁更新的提示：日期取不到时什么都不说，绝不猜。 */
+  function recommendHint(rec) {
+    if (rec === 'replace_existing') {
+      return el('p', { class: 'hint' }, '这份的 PDF 生成日期更晚 —— 看起来是更新的版本。');
+    }
+    if (rec === 'keep_existing') {
+      return el('p', { class: 'hint' }, '库中已有版本较新 —— 建议保留库里那份。');
+    }
+    return el('p', { class: 'hint' }, '两份的 PDF 生成日期不完整，无法判断谁更新，请自己确认。');
+  }
+
   /** 上传后若撞上库里的版本，给出可操作的提示 —— 这正是官方用例 3.1。 */
-  function renderDupAlert(body) {
+  function renderDupAlert(body, file) {
     const box = $('dup-alert');
     if (!box) return;
     if (!body || !body.duplicate_of) {
@@ -1105,28 +1384,46 @@ svg{width:100%;height:auto;display:block}
     }
     const other = state.papers.find((p) => p.id === body.duplicate_of) || {};
     const pct = ((body.similarity || 0) * 100).toFixed(1);
-    const verb = body.relation === 'related' ? '可能相关' : '是同一篇的不同版本';
+    // 标题按关系分三种写法。以前是一句话套两个分支，拼出来是
+    // "库里已有是同一篇的不同版本" —— 读起来像机器翻译。
+    const TITLE = {
+      identical: '库里已有内容完全相同的文件',
+      new_version: '库里已有同一篇的另一个版本',
+      related: '库里已有内容高度相关的另一篇',
+    };
+    // 覆盖按钮的文案跟着"谁更新"变。判断不出来时不许摆出"推荐覆盖"的姿态。
+    const replaceLabel = body.recommendation === 'keep_existing'
+      ? '仍要覆盖库里的版本'
+      : '覆盖：用这份替换';
 
     box.replaceChildren(
       el('div', { class: 'ic', 'aria-hidden': 'true' }, '⧉'),
       el('div', {},
-        el('h3', {}, `库里已有${verb}`),
+        el('h3', {}, TITLE[body.relation] || '库里已有相似的另一篇'),
         el('p', {}, `正文指纹相似度 ${pct}% —— 判定看的是正文内容，不是文件名。`),
         el('div', { class: 'cmp' },
           el('span', {}, '库里已有 ', el('b', {}, other.title || body.duplicate_title || ''),
             ` · ${other.created_at || '日期未知'}`),
           el('span', {}, '本次上传 ', el('b', {}, body.title), ` · ${body.created_at || '日期未知'}`),
         ),
-        el('button', {
-          class: 'btn primary',
-          on: {
-            click: () => {
-              $('ver-old').value = body.duplicate_of;
-              $('ver-new').value = body.id;
-              startCompare();
+        el('div', { class: 'acts' },
+          el('button', {
+            class: 'btn primary',
+            on: {
+              click: () => {
+                $('ver-old').value = body.duplicate_of;
+                $('ver-new').value = body.id;
+                startCompare();
+              },
             },
-          },
-        }, '对比两版改了什么 →'),
+          }, '对比两版改了什么 →'),
+          file && el('button', {
+            class: 'btn',
+            on: { click: () => upload(file, { onDuplicate: 'replace' }) },
+          }, replaceLabel),
+          el('button', { class: 'btn', on: { click: () => renderDupAlert(null) } }, '保留：两份都留着'),
+        ),
+        recommendHint(body.recommendation),
       ),
     );
     box.hidden = false;
@@ -1306,7 +1603,10 @@ svg{width:100%;height:auto;display:block}
       showNote('');
       renderDupAlert(null);   // 刷新后旧的上传提示就过期了
       if (state.papers.length && !state.paper) {
-        await openPaper(state.papers[0].id);
+        // ?paper=<id> 指定这次演示用哪一篇；没指定就用库里最新上传的那篇
+        const want = new URLSearchParams(location.search).get('paper');
+        const target = state.papers.find((p) => p.id === want) || state.papers[0];
+        await openPaper(target.id);
         autoAsk();
       }
       autoCompare();
@@ -1318,7 +1618,13 @@ svg{width:100%;height:auto;display:block}
     }
   }
 
-  async function upload(file) {
+  /**
+   * 上传一篇。`onDuplicate` 是遇到同篇旧版本时的策略：
+   * warn（默认，两版都留）/ replace（删掉库里那版）/ keep（不入库，只回 409）。
+   *
+   * 默认永远是非破坏性的：自动覆盖一旦判错，删掉的是用户手里唯一的那份原件。
+   */
+  async function upload(file, { onDuplicate = 'warn' } = {}) {
     if (!file) return;
     const btn = $('upload-btn');
     btn.disabled = true;
@@ -1326,19 +1632,112 @@ svg{width:100%;height:auto;display:block}
     try {
       const form = new FormData();
       form.append('file', file);
-      const paper = await api('/papers', { method: 'POST', body: form });
+      const paper = await api(`/papers?on_duplicate=${onDuplicate}`, { method: 'POST', body: form });
       showNote(`已解析：${paper.title} · ${paper.pages} 页 · ${paper.chunks} 块`);
       state.papers = await api('/papers');
       renderLibrary();
-      renderDupAlert(paper);   // 判定结果只在上传响应里，列表接口不返回
+      renderDupAlert(paper, file);   // 判定结果只在上传响应里，列表接口不返回
       GRAPH.data = null;       // 库变了，旧图作废
       openInReader(paper.id);
     } catch (err) {
-      showNote(`上传失败：${err.message}`, 'error');
+      // 409 = 库里已有同一篇的版本，而且用户选的是"保留"。这不是失败，
+      // 所以把冲突详情交给提示卡去画"覆盖"按钮，而不是弹一句红字了事。
+      if (err.status === 409 && err.detail) {
+        showNote('');
+        renderConflict(err.detail, file);
+      } else {
+        showNote(`上传失败：${err.message}`, 'error');
+      }
     } finally {
       btn.disabled = false;
       $('upload-input').value = '';   // 允许再次选择同一个文件
     }
+  }
+
+  /** 批量上传：逐个文件入队，逐条显示结果 —— 一个坏文件不影响其它几个。 */
+  async function uploadBatch(files) {
+    const list = [...files].filter(Boolean);
+    if (!list.length) return;
+    const btn = $('upload-btn');
+    btn.disabled = true;
+    showNote(`正在解析 ${list.length} 个文件…（页数多的话要等一会儿）`);
+    renderDupAlert(null);
+    try {
+      const form = new FormData();
+      for (const f of list) form.append('files', f);
+      const items = await api('/papers/batch', { method: 'POST', body: form });
+      state.papers = await api('/papers');
+      renderLibrary();
+      renderBatch(items);
+      GRAPH.data = null;
+      const ok = items.filter((i) => i.ok && !i.skipped).length;
+      showNote(`批量上传完成：成功 ${ok} / ${items.length}，失败 ${items.length - ok}`);
+    } catch (err) {
+      showNote(`批量上传失败：${err.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      $('upload-input').value = '';
+    }
+  }
+
+  function renderBatch(items) {
+    const box = $('batch-list');
+    if (!box) return;
+    if (!items || !items.length) { box.hidden = true; box.replaceChildren(); return; }
+    box.replaceChildren(
+      el('h3', {}, `批量上传结果 · ${items.length} 个文件`),
+      ...items.map((it) => {
+        const state = it.ok && !it.skipped ? 'ok' : 'bad';
+        const label = !it.ok && it.skipped ? '已跳过' : it.ok ? '已入库' : '失败';
+        const p = it.paper;
+        return el('div', { class: `row ${state}` },
+          el('span', { class: 'name', title: it.filename }, it.filename),
+          el('span', { class: 'st' }, label),
+          it.ok && p
+            ? el('span', { class: 'why' }, `${p.pages} 页 · ${p.chunks} 块${p.duplicate_of ? ' · 库里已有另一版本' : ''}`)
+            : el('span', { class: 'why', title: it.error || '' }, it.error || ''),
+        );
+      }),
+    );
+    box.hidden = false;
+  }
+
+  /** 409 冲突：把"覆盖 / 保留"交给用户点，系统只负责说清哪一版更新。 */
+  function renderConflict(detail, file) {
+    const box = $('dup-alert');
+    const existing = detail.existing || {};
+    const uploaded = detail.uploaded || {};
+    if (!box) return;
+    box.replaceChildren(
+      el('div', { class: 'ic', 'aria-hidden': 'true' }, '⧉'),
+      el('div', {},
+        el('h3', {}, '库里已有同一篇的另一个版本'),
+        el('p', {}, `按"保留"策略，这份没有入库。要覆盖库里那版吗？这一步会删掉库里的文件，不可撤销。`),
+        el('div', { class: 'cmp' },
+          el('span', {}, '库里已有 ', el('b', {}, existing.title || ''), ` · ${existing.created_at || '日期未知'}`),
+          el('span', {}, '本次上传 ', el('b', {}, uploaded.title || ''), ` · ${uploaded.created_at || '日期未知'}`),
+        ),
+        el('div', { class: 'acts' },
+          el('button', {
+            class: 'btn primary',
+            on: { click: () => upload(file, { onDuplicate: 'replace' }) },
+          }, '覆盖：用这份替换'),
+          el('button', {
+            class: 'btn',
+            on: {
+              click: () => {
+                $('ver-old').value = existing.id;
+                $('ver-new').value = uploaded.id;
+                startCompare();
+              },
+            },
+          }, '先对比两版 →'),
+          el('button', { class: 'btn', on: { click: () => renderDupAlert(null) } }, '保留：什么都不做'),
+        ),
+        recommendHint(uploaded.recommendation),
+      ),
+    );
+    box.hidden = false;
   }
 
   // ---------------------------------------------------------------- 阅读器
@@ -1638,7 +2037,7 @@ svg{width:100%;height:auto;display:block}
     if (data.evidence.length) {
       const list = el('div', { class: 'note', style: 'margin-top:var(--sp-4)' }, '本次检索到的原文块：');
       data.evidence.forEach((e) => {
-        list.append(el('div', {},
+        list.append(el('div', { class: 'evrow' },
           el('a', {
             href: '#',
             on: {
@@ -1658,6 +2057,142 @@ svg{width:100%;height:auto;display:block}
     body.scrollTop = 0;
   }
 
+  /* ---------------------------------------------------------------- 问答：流式
+
+     事件协议见后端 routers/stream.py：meta → queries → evidence → token* → claims → done。
+
+     一个必须让用户看见的差别：`token` 流出来的是**未校验**的模型原文（这条链路的
+     答案是 JSON，所以屏幕上的草稿其实就是半截 JSON）。服务端在流结束后才跑
+     抗幻觉校验，用 `claims` 事件把最终版推下来。所以界面上分成两块：
+     草稿区明写"未校验、正在生成"，claims 一到就整块换成带坐标的正式结论。 */
+
+  const QSTREAM = { abort: null };
+
+  /** 把 SSE 字节流切成帧；返回 [已完整帧, 剩余半截]。 */
+  function sseSplit(buf) {
+    const frames = [];
+    let rest = buf;
+    let i;
+    while ((i = rest.indexOf('\n\n')) >= 0) {
+      frames.push(rest.slice(0, i));
+      rest = rest.slice(i + 2);
+    }
+    return [frames, rest];
+  }
+
+  function sseParse(raw) {
+    let event = 'message';
+    let data = '';
+    for (const line of raw.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      else if (line.startsWith('data:')) data += line.slice(5).trim();
+    }
+    if (!data) return null;
+    try { return { event, payload: JSON.parse(data) }; } catch { return null; }
+  }
+
+  /** 从半截 JSON 里把已经出现的 "text" 值捞出来，最后一条可能是没写完的。 */
+  function draftClaims(raw) {
+    const re = /"text"\s*:\s*"((?:[^"\\]|\\.)*)("?)/g;
+    const items = [];
+    let m;
+    while ((m = re.exec(raw)) !== null) {
+      let text = m[1];
+      try { text = JSON.parse(`"${text}"`); } catch { /* 半截转义，原样显示 */ }
+      items.push({ text, closed: m[2] === '"' });
+    }
+    return items;
+  }
+
+  function renderDraft(body, question, raw, hits) {
+    const items = draftClaims(raw);
+    const draft = el('div', { class: 'draft' });
+    if (!items.length) {
+      draft.append(el('div', { class: 'think' }, '模型正在生成…（草稿还没成形）'));
+    } else {
+      items.forEach((it, i) => draft.append(el('p', {
+        class: 'draftline',
+        style: i === items.length - 1 ? 'margin:0 0 6px' : 'margin:0 0 8px',
+      }, it.text, it.closed ? '' : el('span', { class: 'caret', 'aria-hidden': 'true' }, '▍'))));
+    }
+    draft.append(el('div', { class: 'note', style: 'margin:0' },
+      '以上是模型草稿，尚未经过引用校验 —— 校验完成后这一块会被替换。'));
+    body.replaceChildren(
+      el('div', { class: 'q' }, question),
+      el('div', { class: 'think' }, `已召回 ${hits.length} 块 · 生成中…`),
+      draft,
+    );
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function renderStreamFinal(question, state_) {
+    const body = $('qa-body');
+    const { claims, hits, stats, tookMs } = state_;
+    body.replaceChildren();
+    body.append(el('div', { class: 'q' }, question));
+    body.append(el('div', { class: 'think' },
+      `检索 ${hits.length} 块 · ${tookMs}ms · `
+      + `通过 ${stats.supported || 0} · 待确认 ${stats.weak || 0} · 拦截 ${stats.unsupported || 0}`));
+
+    if (!claims.length) {
+      body.append(el('p', { class: 'note', style: 'margin:0' },
+        '证据不足，未给出结论。下面仍列出检索到的原文块，可自行判断。'));
+    }
+    claims.forEach((c) => {
+      const block = el('div', { class: 'a' });
+      if (c.status === 'unsupported') {
+        block.append(
+          el('p', { style: 'margin:0 0 6px;color:var(--ink-3);text-decoration:line-through' }, c.text),
+          el('div', { class: 'note', style: 'margin:0' }, `已拦截：${c.reason}`),
+        );
+      } else {
+        block.append(el('p', { style: 'margin:0 0 var(--sp-2)' }, c.text));
+        if (c.status === 'weak') {
+          block.append(el('div', { class: 'note', style: 'margin:0 0 6px' }, '模糊命中，原文需人工确认'));
+        }
+        (c.anchors || []).forEach((a) => block.append(anchorBlock(a)));
+      }
+      body.append(block);
+    });
+
+    if (hits.length) {
+      const list = el('div', { class: 'note', style: 'margin-top:var(--sp-4)' }, '本次检索到的原文块：');
+      hits.forEach((e, i) => {
+        list.append(el('div', { class: 'evrow' },
+          el('a', {
+            href: '#',
+            on: {
+              click: (ev) => {
+                ev.preventDefault();
+                // 流式事件里带的是 chunk_index，比"按节名+页码猜"精确
+                const chunk = state.chunks.find((c) => c.index === e.chunk_index)
+                  || state.chunks.find((c) => c.section === e.section && c.page_start === e.page);
+                if (chunk) { goTo('reader'); renderChunk(chunk); }
+              },
+            },
+          }, `#${i + 1} p.${e.page} ${e.section} `),
+          el('span', { class: 'mono' }, Number(e.score || 0).toFixed(4)),
+        ));
+      });
+      body.append(list);
+    }
+    body.scrollTop = 0;
+  }
+
+  /** 兜底：流式不可用（浏览器/代理吞掉 SSE）时退回一次性接口。 */
+  async function askOnce(question, body) {
+    const data = await api(`/papers/${state.paper.id}/qa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, k: 6 }),
+    });
+    $('qa-chip').textContent = data.stats.unsupported
+      ? `拦截 ${data.stats.unsupported} 条`
+      : '已溯源';
+    renderAnswer(data);
+    return data;
+  }
+
   async function ask() {
     const input = $('qa-input');
     const question = input.value.trim();
@@ -1669,26 +2204,95 @@ svg{width:100%;height:auto;display:block}
     const body = $('qa-body');
     body.replaceChildren(
       el('div', { class: 'q' }, question),
-      el('div', { class: 'think' }, '检索 → 校验 → 回填坐标…'),
+      el('div', { class: 'think' }, '检索 → 生成 → 校验 → 回填坐标…'),
     );
 
+    // 上一问还没流完就开始新的一问：先掐掉旧的，否则两股 token 会串在一起
+    if (QSTREAM.abort) QSTREAM.abort.abort();
+    const ctrl = new AbortController();
+    QSTREAM.abort = ctrl;
+
+    const acc = { hits: [], claims: [], stats: {}, tookMs: 0, raw: '', done: false };
+
     try {
-      const data = await api(`/papers/${state.paper.id}/qa`, {
+      const res = await fetch(`${API}/papers/${state.paper.id}/qa/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, k: 6 }),
+        signal: ctrl.signal,
       });
-      $('qa-chip').textContent = data.stats.unsupported
-        ? `拦截 ${data.stats.unsupported} 条`
+      if (!res.ok || !res.body) { await askOnce(question, body); return; }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let partial = '';
+
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let frames;
+        [frames, buf] = sseSplit(buf);
+        for (const raw of frames) {
+          const ev = sseParse(raw);
+          if (!ev) continue;
+          const p = ev.payload || {};
+          if (ev.event === 'meta') {
+            $('qa-chip').textContent = '检索中…';
+          } else if (ev.event === 'queries') {
+            partial = (p.queries || []).join(' / ');
+            $('qa-chip').textContent = '已扩展检索词';
+          } else if (ev.event === 'evidence') {
+            acc.hits = p.hits || [];
+            $('qa-chip').textContent = `召回 ${acc.hits.length} 块`;
+            body.replaceChildren(
+              el('div', { class: 'q' }, question),
+              el('div', { class: 'think' }, `检索词：${partial || question} · 召回 ${acc.hits.length} 块 · 生成中…`),
+            );
+          } else if (ev.event === 'token') {
+            acc.raw += p.text || '';
+            renderDraft(body, question, acc.raw, acc.hits);
+          } else if (ev.event === 'claims') {
+            acc.claims = p.claims || [];
+            acc.stats = p.stats || {};
+          } else if (ev.event === 'done') {
+            acc.tookMs = p.took_ms || 0;
+            acc.done = true;
+          } else if (ev.event === 'error') {
+            // 半路挂了：已经流出来的 token 不能当结论，但证据块照样有用
+            $('qa-chip').textContent = '失败';
+            body.replaceChildren(
+              el('div', { class: 'q' }, question),
+              el('p', { class: 'note', style: 'color:var(--warn)' },
+                `生成中断（${p.stage || 'unknown'}）：${p.message || ''}`),
+              ...(acc.hits.length
+                ? [el('p', { class: 'note' }, `不过检索本身成功了：召回 ${acc.hits.length} 块原文，可以先用「只给证据」模式看。`)]
+                : []),
+            );
+            return;
+          }
+        }
+      }
+
+      if (!acc.done) {
+        body.append(el('p', { class: 'note', style: 'color:var(--warn);margin-top:10px' },
+          '连接在收到结束事件前就断了 —— 上面的结论不完整。'));
+        return;
+      }
+      $('qa-chip').textContent = acc.stats.unsupported
+        ? `拦截 ${acc.stats.unsupported} 条`
         : '已溯源';
-      renderAnswer(data);
+      renderStreamFinal(question, acc);
     } catch (err) {
+      if (err.name === 'AbortError') return;   // 用户自己发起了新的一问
       $('qa-chip').textContent = '失败';
       body.replaceChildren(
         el('div', { class: 'q' }, question),
         el('p', { class: 'note', style: 'color:var(--warn)' }, `问答失败：${err.message}`),
       );
     } finally {
+      if (QSTREAM.abort === ctrl) QSTREAM.abort = null;
       btn.disabled = false;
     }
   }
@@ -2303,9 +2907,81 @@ svg{width:100%;height:auto;display:block}
     setTimeout(() => { box.style.outline = ''; }, 1400);
   }
 
+  // ---------------------------------------------------------------- 中译英
+
+  /* 逐段翻译的结果要能一眼看出"哪一段是被退回原文的"。
+     后端的原则是：译文里要是丢了公式、代码或 [12] 这种引用标号，整段作废、
+     原样返回中文。对使用者来说，"这半句没翻"比"翻错半句"要好得多 ——
+     但前提是界面必须点出来，否则一段没翻的中文混在英文里，读的人会以为
+     那是漏排，而不是刻意的降级。 */
+  const TR_MAX = 20000;
+
+  function renderTranslate(out) {
+    const box = $('tr-out');
+    box.replaceChildren();
+    const reverted = [];
+
+    out.paragraphs.forEach((p, i) => {
+      const en = (p.en || '').trim();
+      const zh = (p.zh || '').trim();
+      const fell = !en || en === zh;
+      if (fell) reverted.push(i + 1);
+      box.append(el('p', { class: 'para' }, fell ? zh : en));
+      if (fell) {
+        box.append(el('div', { class: 'src' }, `第 ${i + 1} 段退回原文（译文没保住公式或引用标号）`));
+      }
+    });
+
+    if (!out.paragraphs.length) {
+      box.append(el('p', { class: 'para' }, '没有可翻译的段落。'));
+    }
+    const notes = [...(out.notes || [])];
+    if (notes.length) {
+      box.prepend(el('div', { class: 'src', style: 'margin:0 0 8px' }, notes.join(' ')));
+    }
+    $('tr-state').textContent = `${out.paragraphs.length} 段`
+      + (reverted.length ? ` · ${reverted.length} 段退回原文` : '')
+      + (out.degraded ? ' · 降级' : '');
+    $('tr-copy').disabled = false;
+  }
+
+  async function translateZh() {
+    const text = $('tr-in').value.trim();
+    if (!text) { $('tr-state').textContent = '先贴一段中文'; return; }
+    const btn = $('tr-run');
+    btn.disabled = true;
+    $('tr-state').textContent = '翻译中…';
+    try {
+      const out = await api('/translate/zh-en', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, style: $('tr-style').value }),
+      });
+      renderTranslate(out);
+    } catch (err) {
+      $('tr-state').textContent = '失败';
+      $('tr-out').replaceChildren(
+        el('p', { class: 'para', style: 'color:var(--warn)' }, `翻译失败：${err.message}`),
+      );
+      $('tr-copy').disabled = true;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   // ---------------------------------------------------------------- CSV → 图
-  /* 前端本地画，不上传任何数据：CSV 里往往是还没发表的实验结果。 */
-  const VIZ = { rows: [], headers: [] };
+
+  /* 两级渲染，各管一件事：
+
+     1. **本地先画一版**：选完文件立刻有东西看，断网/后端挂了也不至于白屏；
+     2. **再交给本机后端**做正经统计与出图，回来后用它替换本地预览，并带上
+        经过数字核验的图注、以及 TikZ / Mermaid / Matplotlib 源码导出。
+
+     隐私边界（界面上也这么写）：CSV 的原始行只到 **127.0.0.1 上的后端**，
+     不落盘、不出本机；真正发给大模型的只有统计卡（列名、极值、均值这类聚合量）。
+     实验结果往往是还没发表的，这个区别值得写清楚，而不是含糊地说"不上传"。 */
+  const VIZ = { rows: [], headers: [], out: null, file: null, seq: 0 };
+  const KIND_ZH = { bar: '柱状图', line: '折线图', scatter: '散点图', radar: '雷达图' };
 
   function parseCsv(text) {
     const lines = text.split(/\r?\n/).filter((l) => l.trim());
@@ -2413,6 +3089,7 @@ svg{width:100%;height:auto;display:block}
       + `相差 ${drop}%。柱状图仅呈现观测值，不含误差棒，差异是否显著需另做检验。`;
   }
 
+  /** 本地预览版：只画柱状图，图注由前端按观测值直接拼。 */
   function renderViz(rows, headers) {
     VIZ.rows = rows; VIZ.headers = headers;
     if (!rows.length) {
@@ -2425,23 +3102,128 @@ svg{width:100%;height:auto;display:block}
     $('viz-chart').replaceChildren(drawBarChart(rows, headers));
     $('viz-caption').textContent = captionFor(rows, headers);
     $('viz-export').disabled = false;
-    $('viz-state').textContent = `${rows.length} 组数据`;
+    $('viz-state').textContent = `${rows.length} 组数据（本地预览）`;
+  }
+
+  /** 把后端返回的 SVG 字符串变成可插入的节点。
+   *
+   * 它出自我们自己的进程，但仍然按"外来文本"处理：SVG 是能携带脚本的格式，
+   * 渲染端不该无条件相信一段文本 —— `onload=`、`<script>`、`foreignObject`
+   * 都是能在页面里执行代码的入口。去掉这些，剩下的才是纯图形。 */
+  function safeSvg(markup) {
+    const doc = new DOMParser().parseFromString(markup, 'image/svg+xml');
+    const rootNode = doc.documentElement;
+    if (!rootNode || rootNode.nodeName === 'parsererror') return null;
+    rootNode.querySelectorAll('script, foreignObject').forEach((n) => n.remove());
+    [rootNode, ...rootNode.querySelectorAll('*')].forEach((n) => {
+      [...n.attributes].forEach((attr) => {
+        if (/^on/i.test(attr.name)) n.removeAttribute(attr.name);
+        else if (attr.name === 'href' && /^\s*javascript:/i.test(attr.value)) n.removeAttribute(attr.name);
+      });
+    });
+    return document.importNode(rootNode, true);
+  }
+
+  function clearVizExports() {
+    ['viz-mermaid', 'viz-tikz', 'viz-mpl'].forEach((id) => { $(id).hidden = true; });
+  }
+
+  /** 交给本机后端：统计 + 出图 + 抗幻觉图注 + 源码导出。 */
+  async function fetchServerChart(file) {
+    const seq = ++VIZ.seq;   // 连点时只认最后一次，别让先发的请求覆盖后发的
+    const kind = $('viz-kind')?.value || '';
+    $('viz-state').textContent = '服务端统计中…';
+
+    const form = new FormData();
+    form.append('file', file, file.name || 'data.csv');
+    if (kind) form.append('kind', kind);
+    // 图里的颜色是烘焙进 SVG 的，深色主题要后端按深色配色重画
+    form.append('dark', document.documentElement.dataset.theme === 'dark' ? 'true' : 'false');
+
+    try {
+      const out = await api('/dataviz/chart', { method: 'POST', body: form });
+      if (seq !== VIZ.seq) return;
+
+      const node = safeSvg(out.chart.svg);
+      if (!node) throw new Error('返回的 SVG 解析失败');
+
+      VIZ.out = out;
+      $('viz-chart').replaceChildren(node);
+      $('viz-caption').textContent = out.caption ? out.caption.text : '';
+      $('viz-state').textContent = `${out.table.total_rows} 行 · ${KIND_ZH[out.chart.kind] || out.chart.kind}`
+        + (out.table.truncated ? ` · 表格只回前 ${out.table.rows.length} 行` : '');
+      $('viz-export').disabled = false;
+      ['viz-mermaid', 'viz-tikz', 'viz-mpl'].forEach((id) => { $(id).hidden = false; });
+
+      // 图注的可信度必须显示出来：编造的数字被替换成了 [未核实]，
+      // 或者整段退回了模板 —— 这两件事用户有权知道
+      const notes = [...(out.notes || []), ...(out.caption?.notes || [])];
+      const box = $('viz-caption-note');
+      box.replaceChildren();
+      if (out.caption && !out.caption.trusted && !notes.length) {
+        notes.push('这段图注没有通过数字核验，仅供参考。');
+      }
+      if (notes.length) box.append(el('div', { class: 'note', style: 'margin:0 0 6px' }, notes.join(' ')));
+      if (out.degraded) box.append(el('div', { class: 'note', style: 'margin:0' }, '大模型不可用，图注由统计卡模板生成。'));
+    } catch (err) {
+      if (seq !== VIZ.seq) return;
+      VIZ.out = null;
+      clearVizExports();
+      // 后端拒绝（列类型不对、图型不支持）时本地预览那版还在，不白屏
+      $('viz-state').textContent = '服务端未出图，下面是本地预览';
+      $('viz-caption-note').replaceChildren(
+        el('div', { class: 'note', style: 'margin:0;color:var(--warn)' }, `服务端：${err.message}`),
+      );
+    }
+  }
+
+  // 主题按钮在另一段脚本里，它只会调这个钩子；这里负责真去重画
+  window.__onThemeChange = () => { if (VIZ.out && VIZ.file) fetchServerChart(VIZ.file); };
+
+  /** 统一入口：本地先出图，再把文件交给后端。 */
+  function handleCsv(text, file) {
+    const { rows, headers } = parseCsv(text);
+    VIZ.file = file || null;
+    VIZ.out = null;
+    clearVizExports();
+    $('viz-caption-note').replaceChildren();
+    renderViz(rows, headers);
+    if (VIZ.file) fetchServerChart(VIZ.file);
   }
 
   function readCsvFile(file) {
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      const { rows, headers } = parseCsv(String(reader.result));
-      renderViz(rows, headers);
-    };
-    reader.onerror = () => { $('viz-state').textContent = '读文件失败'; };
-    // 本地读，不走网络：实验结果不该离开这台机器
+    // 本地读只是为了让画面立刻有反应。读失败也照样把文件交给后端 ——
+    // 让后端给出明确的原因，比前端猜一句"读文件失败"有用
+    // （注意后端只收 UTF-8，含 BOM 可以；GBK 的表会明确 400，不静默乱码）
+    reader.onload = () => handleCsv(String(reader.result), file);
+    reader.onerror = () => handleCsv('', file);
     reader.readAsText(file, 'utf-8');
   }
 
-  /** 导出 SVG 时把 CSS 变量换成实际颜色：单独打开的 SVG 读不到页面变量。 */
+  function download(filename, text, mime = 'text/plain;charset=utf-8') {
+    const a = el('a', { href: URL.createObjectURL(new Blob([text], { type: mime })), download: filename });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+
+  /** 导出 SVG：图注写进 <desc>，单独的图片文件离开页面也不会"没有说明"。 */
   function exportViz() {
+    const caption = VIZ.out?.caption?.text || captionFor(VIZ.rows, VIZ.headers);
+    if (VIZ.out) {
+      // 服务端版颜色已经烘焙进属性，不需要再从计算样式里搬一遍
+      const doc = new DOMParser().parseFromString(VIZ.out.chart.svg, 'image/svg+xml');
+      const desc = doc.createElementNS(SVGNS, 'desc');
+      desc.textContent = caption;
+      doc.documentElement.prepend(desc);
+      download('figure-1.svg',
+        `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(doc)}`,
+        'image/svg+xml');
+      return;
+    }
+
+    // 本地预览版用的是 CSS 变量，导出前换成实际颜色：单独打开的 SVG 读不到页面变量
     const svg = $('viz-chart').querySelector('svg');
     if (!svg) return;
     const clone = svg.cloneNode(true);
@@ -2454,15 +3236,354 @@ svg{width:100%;height:auto;display:block}
     clone.setAttribute('xmlns', SVGNS);
     clone.setAttribute('width', '960');
     clone.setAttribute('height', '456');
-    // 图注跟着 SVG 一起走：单独的图片文件离开页面就成了"没有说明的数字"
     const desc = document.createElementNS(SVGNS, 'desc');
-    desc.textContent = captionFor(VIZ.rows, VIZ.headers);
+    desc.textContent = caption;
     clone.prepend(desc);
     const body = new XMLSerializer().serializeToString(clone);
-    const blob = new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${body}`], { type: 'image/svg+xml' });
-    const a = el('a', { href: URL.createObjectURL(blob), download: 'figure-1.svg' });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    download('figure-1.svg', `<?xml version="1.0" encoding="UTF-8"?>\n${body}`, 'image/svg+xml');
+  }
+
+  /* ---------------------------------------------------------------- 文献检索
+
+     工具链是"检索 → 下载 → 解析入库"三件事，界面上也分三步显示状态：
+     用户点「入库」之后要能看见它在下载、在解析，而不是转圈两秒后突然多一条。
+     断网不报错：arXiv 不可达时后端返回 degraded，这里如实说明。 */
+  const ARX = { busy: false, data: null };
+
+  async function runArxiv() {
+    const q = $('arx-q').value.trim();
+    if (!q) { $('arx-state').textContent = '先写检索词'; return; }
+    if (ARX.busy) return;
+    ARX.busy = true;
+    $('arx-run').disabled = true;
+    $('arx-out').replaceChildren(skeleton(3));
+    $('arx-state').textContent = '查询 arXiv…';
+    try {
+      const limit = Number($('arx-limit').value) || 5;
+      const data = await api(`/tools/arxiv/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+      ARX.data = data;
+      renderArxivHits(data);
+    } catch (err) {
+      $('arx-state').textContent = '检索失败';
+      $('arx-out').replaceChildren(el('p', { class: 'note', style: 'color:var(--warn)' },
+        `检索失败：${err.message}`));
+    } finally {
+      ARX.busy = false;
+      $('arx-run').disabled = false;
+    }
+  }
+
+  function renderArxivHits(data) {
+    $('arx-state').textContent = data.degraded
+      ? `arXiv 不可达：${data.note}`
+      : `${data.results.length} 条结果`;
+    const out = $('arx-out');
+    if (!data.results.length) {
+      out.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
+        data.degraded
+          ? '这次没取到结果。检索词已收到，网络通了再点一次即可 —— 库里的文献不受影响。'
+          : '没有匹配的结果，换个更具体的检索词试试。'));
+      return;
+    }
+    out.replaceChildren(...data.results.map(hitRow));
+  }
+
+  function hitRow(r) {
+    const btn = el('button', { class: 'btn', type: 'button' }, '入库');
+    btn.addEventListener('click', () => ingestArxiv(r, btn));
+    const names = r.authors.length > 3
+      ? `${r.authors.slice(0, 3).join('、')} 等 ${r.authors.length} 人`
+      : r.authors.join('、');
+    return el('div', { class: 'hitrow', style: 'margin-bottom:10px' },
+      el('h4', {}, r.title),
+      el('div', { class: 'meta' }, `${names} · ${r.published} · arXiv:${r.arxiv_id}`),
+      el('p', { class: 'abs' }, r.abstract),
+      el('div', { class: 'act' }, btn,
+        el('a', { class: 'sub', href: r.abs_url, target: '_blank', rel: 'noopener',
+          style: 'margin:0' }, 'arXiv 页面 →')));
+  }
+
+  async function ingestArxiv(hit, btn) {
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '下载并解析…';
+    try {
+      const data = await api('/tools/arxiv/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ arxiv_id: hit.arxiv_id }),
+      });
+      btn.textContent = '已入库';
+      // 库变了：列表、版本下拉、引用图谱缓存全都要重来
+      state.papers = await api('/papers');
+      GRAPH.data = null;
+      renderLibrary();
+      renderVersionPicker();
+      const dup = data.duplicate_of
+        ? `；库里已有同一篇的另一版本（${data.duplicate_of}），可在版本谱系里比`
+        : '';
+      showNote(`已入库《${data.paper.title}》：${data.paper.pages} 页 · ${data.paper.chunks} 块${dup}`);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = label;
+      showNote(`入库失败：${err.message}`, 'error');
+    }
+  }
+
+  /* ---------------------------------------------------------------- 学术综述
+
+     与写作 Copilot 同一套规矩：模型只返回证据编号，引用原文由服务端回填。
+     这里额外把 future 的 open / solved 摊开显示，并把"这是模型判断"写在旁边 ——
+     把推断说成事实，正是这个赛题最忌讳的那种幻觉。 */
+  const RV = { busy: false, data: null };
+
+  async function runReview() {
+    const topic = $('rv-topic').value.trim();
+    if (!topic) { $('rv-state').textContent = '先写一个主题'; return; }
+    if (RV.busy) return;
+    RV.busy = true;
+    $('rv-run').disabled = true;
+    $('rv-out').replaceChildren(skeleton(4));
+    $('rv-refs').replaceChildren(skeleton(2));
+    $('rv-future').replaceChildren(skeleton(2));
+    $('rv-state').textContent = '检索全库原文 → 写综述 → 核对引用…';
+    try {
+      const data = await api('/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic, max_papers: Number($('rv-max').value) || 6 }),
+      });
+      RV.data = data;
+      renderReview();
+      $('rv-state').textContent = data.degraded
+        ? `大模型不可用：只列出检索到的原文${data.note ? `（${data.note}）` : ''}`
+        : `${data.sections.length} 节 · 引用 ${data.references.length} 条原文`;
+    } catch (err) {
+      RV.data = null;
+      $('rv-state').textContent = '生成失败';
+      $('rv-out').replaceChildren(el('p', { class: 'note', style: 'color:var(--warn)' },
+        `生成失败：${err.message}`));
+      $('rv-refs').replaceChildren();
+      $('rv-future').replaceChildren();
+    } finally {
+      RV.busy = false;
+      $('rv-run').disabled = false;
+    }
+  }
+
+  function renderReview() {
+    const data = RV.data;
+    if (!data) return;
+
+    const out = $('rv-out');
+    const head = el('p', { class: 'note', style: 'margin:0 0 12px' },
+      `本次用到 ${data.papers.length} 篇：${data.papers.map((p) => `《${shortLabel(p.title, 26)}》`).join('、')}`);
+    if (!data.sections.length) {
+      out.replaceChildren(head, el('p', { class: 'note', style: 'margin:0' },
+        '这次没写出综述（大模型不可用）。右边的原文照样列出来了，可以自己先组织。'));
+    } else {
+      out.replaceChildren(head, ...data.sections.map((sec) => el('div',
+        { style: 'margin-bottom:16px' },
+        el('h4', { style: 'margin:0 0 8px;font-size:var(--fs-sm)' }, sec.heading),
+        ...sec.points.map((pt) => el('div',
+          { style: 'display:flex;gap:6px;align-items:flex-start;margin-bottom:7px' },
+          el('span', { style: 'color:var(--ink-3)' }, '·'),
+          el('span', { style: 'flex:1;font-size:var(--fs-sm);line-height:1.6' }, pt.text),
+          ...pt.evidence.map((n) => el('button', {
+            class: 'cmark', type: 'button',
+            on: { click: () => flashRef('rv-refs', n) },
+          }, `[${n}]`)))))));
+    }
+
+    const refsBox = $('rv-refs');
+    refsBox.replaceChildren(...(data.references.length
+      ? data.references.map((r) => el('div', {
+        class: 'refrow', 'data-n': String(r.n),
+        on: { click: () => jumpToPaper(r.paper_id, r.page) },
+      },
+      el('span', { class: 'k' }, `[${r.n}]`),
+      el('span', {}, `${r.title} · p.${r.page}`),
+      el('span', { class: 'raw', style: 'display:block;margin-top:4px' }, `“${r.quote}”`),
+      el('span', { style: 'display:block;margin-top:6px;color:var(--s1)' }, '打开原文 →')))
+      : [el('p', { class: 'note', style: 'margin:0' }, '这次没检索到可用原文。')]));
+
+    const futBox = $('rv-future');
+    futBox.replaceChildren(...(data.future.length
+      ? data.future.map((f) => el('div', { style: 'margin-bottom:11px' },
+        el('div', { style: 'display:flex;gap:6px;align-items:center;margin-bottom:4px;flex-wrap:wrap' },
+          el('span', { class: 'chip', style: f.status === 'solved' ? 'color:var(--ink-3)' : '' },
+            f.status === 'solved' ? '模型判断：已被解决' : '待探索'),
+          ...f.evidence.map((n) => el('button', {
+            class: 'cmark', type: 'button', on: { click: () => flashRef('rv-refs', n) },
+          }, `[${n}]`))),
+        el('div', { style: 'font-size:var(--fs-sm);line-height:1.6' }, f.idea),
+        f.why ? el('div', { class: 'note', style: 'margin-top:2px' }, `依据：${f.why}`) : ''))
+      : [el('p', { class: 'note', style: 'margin:0' }, '没有提炼出未来方向（这次没拿到 Future Work 段落）。')]));
+  }
+
+  /** 综述里点 [n]：把右栏对应那条原文滚到眼前并闪一下。 */
+  function flashRef(boxId, n) {
+    const row = $(boxId).querySelector(`[data-n="${n}"]`);
+    if (!row) { showNote(`本次引用里没有第 ${n} 条`); return; }
+    flash(row);
+  }
+
+  /* ---------------------------------------------------------------- 任务 Agent
+
+     这一块回答的是评分表里"Agent 会不会自己拆任务"那一问，所以界面上必须
+     同时看见三样东西：**它打算怎么做**（计划）、**它实际做了什么**（轨迹）、
+     **做完的结论凭什么**（可引用原文）。只给一个结论框的话，再好的规划器
+     也看不出跟普通问答有什么区别。 */
+  const AG = { busy: false, tools: null };
+
+  const TOOL_LABEL = {
+    search_library: '全库检索',
+    get_paper: '读文献元信息',
+    answer_question: '单篇问答',
+    compare_versions: '比两版差异',
+    search_arxiv: 'arXiv 检索',
+    citation_graph: '引用图谱',
+    find_main_papers: '基石论文',
+    list_papers: '列出文献库',
+    scan_pdf: '扫描件诊断',
+  };
+
+  async function loadAgentTools() {
+    if (AG.tools) return;
+    try {
+      const data = await api('/agent/tools');
+      AG.tools = data.tools || [];
+      $('ag-tools').replaceChildren(...AG.tools.map((t) => el('div', {
+        class: 'tool', title: JSON.stringify(t.parameters || {}, null, 1),
+      },
+      el('b', {}, t.name),
+      el('span', {}, t.description || ''))));
+    } catch (err) {
+      $('ag-tools').replaceChildren(el('p', { class: 'note', style: 'margin:0;color:var(--warn)' },
+        `读不到工具清单：${err.message}`));
+    }
+  }
+
+  /** 计划里的参数太长会把一行撑爆：只显示前几个字段，完整内容放在 title 里。 */
+  function argsLine(args) {
+    if (!args || !Object.keys(args).length) return '';
+    return Object.entries(args)
+      .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
+      .join(', ')
+      .slice(0, 96);
+  }
+
+  function renderPlan(steps, notes) {
+    const box = $('ag-plan-out');
+    if (!steps || !steps.length) {
+      box.replaceChildren(el('p', { class: 'note', style: 'margin:0' }, '这次没有产出计划。'));
+      return;
+    }
+    box.replaceChildren(
+      el('ol', { class: 'plan' }, ...steps.map((s) => el('li', {},
+        el('span', { class: 'n' }, String(s.id)),
+        el('div', { class: 'body' },
+          el('div', {},
+            el('span', { class: 't' }, s.tool),
+            el('span', { class: 'a', style: 'margin-left:8px' }, argsLine(s.args)),
+            s.dropped_reason ? el('span', { class: 'drop' }, ` · 已丢弃：${s.dropped_reason}`) : ''),
+          s.why ? el('div', { class: 'why' }, s.why) : ''),
+      ))),
+      ...(notes && notes.length
+        ? [el('p', { class: 'note', style: 'margin:12px 0 0' }, `服务端说明：${notes.join('；')}`)]
+        : []),
+    );
+  }
+
+  function renderTrace(trace) {
+    const box = $('ag-trace');
+    if (!trace || !trace.length) {
+      box.replaceChildren(el('p', { class: 'note', style: 'margin:0' }, '这次只做了规划，没有执行。'));
+      return;
+    }
+    box.replaceChildren(el('div', { class: 'trace' }, ...trace.map((t) => el('div',
+      { class: `trow${t.ok ? '' : ' bad'}` },
+      el('span', { class: 't' }, `#${t.step} ${t.tool}`),
+      el('span', { class: 'obs' },
+        t.dropped_reason ? `未执行：${t.dropped_reason}` : (t.observation_preview || '').slice(0, 160)),
+      el('span', { class: 'ms' }, t.took_ms == null ? '' : `${t.took_ms} ms`),
+    ))));
+  }
+
+  function renderAgentAnswer(out) {
+    const body = $('ag-answer');
+    const ev = $('ag-evidence');
+    const parts = [];
+    if (!out.answer) {
+      parts.push(el('p', { class: 'note', style: 'margin:0' },
+        out.degraded
+          ? '大模型这次不可用：计划与执行都退成了规则版，下面只有工具观测，没有生成结论。'
+          : '这次没有给出结论。'));
+    } else {
+      parts.push(el('p', { style: 'margin:0 0 12px;font-size:var(--fs-sm);line-height:1.7;white-space:pre-wrap' },
+        out.answer));
+    }
+    if (out.degraded) {
+      parts.push(el('p', { class: 'note', style: 'color:var(--warn);margin:0' },
+        `降级说明：${(out.notes || []).join('；') || '大模型不可用，只保留了工具观测。'}`));
+    }
+    body.replaceChildren(...parts);
+
+    const list = out.evidence || [];
+    ev.replaceChildren(...(list.length
+      ? list.map((e, i) => el('div', {
+        class: 'refrow',
+        on: { click: () => jumpToPaper(e.paper_id, e.page) },
+      },
+      el('span', { class: 'k' }, `[${i + 1}]`),
+      el('span', {}, `${e.title} · p.${e.page} · #${e.chunk_index}`),
+      el('span', { class: 'raw', style: 'display:block;margin-top:4px' }, `“${e.quote}”`)))
+      : [el('p', { class: 'note', style: 'margin:0' },
+        '这次的结论没有挂上原文块 —— 结论可能来自图谱统计或元信息，不需要引用正文。')]));
+  }
+
+  async function runAgent(mode) {
+    if (AG.busy) return;
+    const task = ($('ag-task').value || '').trim();
+    if (!task) { $('ag-task').focus(); return; }
+    AG.busy = true;
+    $('ag-plan').disabled = true;
+    $('ag-run').disabled = true;
+    $('ag-state').textContent = mode === 'run' ? '正在规划并执行…（要调几次工具，慢一些）' : '正在规划…';
+    try {
+      const out = mode === 'run'
+        ? await api('/agent/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task }),
+        })
+        : await api('/agent/plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task }),
+        });
+      renderPlan(out.steps || (out.plan && out.plan.steps), out.notes);
+      if (mode === 'run') {
+        renderTrace(out.trace);
+        renderAgentAnswer(out);
+        state.papers = await api('/papers');   // 工具可能改了库（如 arXiv 入库）
+        renderLibrary();
+      } else {
+        renderTrace(null);
+        $('ag-answer').replaceChildren(el('p', { class: 'note', style: 'margin:0' },
+          '只规划不执行 —— 点「规划并执行」才会真的调工具。'));
+        $('ag-evidence').replaceChildren();
+      }
+      $('ag-state').textContent = out.degraded ? '完成（大模型不可用，已降级）' : '完成';
+    } catch (err) {
+      $('ag-state').textContent = '';
+      $('ag-plan-out').replaceChildren(el('p', { class: 'note', style: 'color:var(--warn)' },
+        `执行失败：${err.message}`));
+    } finally {
+      AG.busy = false;
+      $('ag-plan').disabled = false;
+      $('ag-run').disabled = false;
+    }
   }
 
   // ---------------------------------------------------------------- 绑定
@@ -2500,20 +3621,68 @@ svg{width:100%;height:auto;display:block}
     e.currentTarget.textContent = `联动滚动 ${SPLIT.on ? '开' : '关'}`;
   });
 
+  $('arx-run')?.addEventListener('click', runArxiv);
+  $('arx-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runArxiv(); });
+  $('rv-run')?.addEventListener('click', runReview);
+  $('rv-topic')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runReview(); });
+
+  $('ag-plan')?.addEventListener('click', () => runAgent('plan'));
+  // 进到这个视图才拉工具清单：它只在演示时才看，没必要拖慢首屏
+  window.addEventListener('hashchange', () => {
+    if (location.hash.slice(1) === 'agent') loadAgentTools();
+  });
+  if (location.hash.slice(1) === 'agent') loadAgentTools();
+  $('ag-run')?.addEventListener('click', () => runAgent('run'));
+  $('ag-task')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent('run'); });
+
   $('cp-run')?.addEventListener('click', runCopilot);
   $('cp-idea')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runCopilot(); });
   $('viz-upload')?.addEventListener('click', () => $('viz-input').click());
   $('viz-input')?.addEventListener('change', (e) => readCsvFile(e.target.files[0]));
   $('viz-export')?.addEventListener('click', exportViz);
-  $('viz-demo')?.addEventListener('click', () => renderViz(
-    [{ label: 'A', value: 42 }, { label: 'B', value: 68 }, { label: 'C', value: 90 },
-     { label: 'D', value: 58 }, { label: 'E', value: 34 }],
-    ['组别', '平均检索延迟 ms'],
-  ));
+  // 示例数据也走完整的服务端链路：演示时看到的图和用户自己传文件时一模一样
+  const VIZ_DEMO = [
+    ['A', 42], ['B', 68], ['C', 90], ['D', 58], ['E', 34],
+  ];
+  $('viz-demo')?.addEventListener('click', () => {
+    const csv = ['组别,平均检索延迟 ms', ...VIZ_DEMO.map(([k, v]) => `${k},${v}`)].join('\n');
+    handleCsv(csv, new File([csv], 'demo-latency.csv', { type: 'text/csv' }));
+  });
+  $('viz-kind')?.addEventListener('change', () => { if (VIZ.file) fetchServerChart(VIZ.file); });
+  $('viz-mermaid')?.addEventListener('click', () => VIZ.out && download('figure-1.mmd', VIZ.out.exports.mermaid));
+  $('viz-tikz')?.addEventListener('click', () => VIZ.out && download('figure-1.tex', VIZ.out.exports.tikz));
+  $('viz-mpl')?.addEventListener('click', () => VIZ.out
+    && download('figure-1.py', VIZ.out.exports.matplotlib, 'text/x-python;charset=utf-8'));
+
+  $('tr-run')?.addEventListener('click', translateZh);
+  $('tr-in')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) translateZh();   // Ctrl/⌘+Enter 直接译
+  });
+  // 后端 20000 字封顶，超了会 413；输入时就先把数报出来，别等提交才被打回
+  $('tr-in')?.addEventListener('input', () => {
+    const n = $('tr-in').value.length;
+    $('tr-count').textContent = `${n} / ${TR_MAX} 字`;
+    $('tr-count').style.color = n > TR_MAX ? 'var(--warn)' : '';
+  });
+  $('tr-copy')?.addEventListener('click', async () => {
+    const text = [...$('tr-out').querySelectorAll('p.para')].map((p) => p.textContent).join('\n\n');
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      $('tr-state').textContent = '已复制译文';
+    } catch {
+      $('tr-state').textContent = '浏览器拒绝了剪贴板写入，手动选一下吧';
+    }
+  });
 
   $('upload-btn')?.addEventListener('click', () => $('upload-input').click());
   $('empty-upload')?.addEventListener('click', () => $('upload-input').click());
-  $('upload-input')?.addEventListener('change', (e) => upload(e.target.files[0]));
+  $('upload-input')?.addEventListener('change', (e) => {
+    const files = e.target.files;
+    if (!files || !files.length) return;
+    if (files.length === 1) upload(files[0]);
+    else uploadBatch(files);
+  });
   $('refresh-btn')?.addEventListener('click', loadPapers);
   // 包一层：直接把 runCompare 当监听器会把 MouseEvent 当参数传进去
   $('ver-run')?.addEventListener('click', () => runCompare());
