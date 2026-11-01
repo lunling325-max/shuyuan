@@ -243,3 +243,126 @@ def test_repeated_ingest_lands_on_same_content_hash_id(client, store, monkeypatc
         "https://arxiv.org/pdf/1706.03762",
         "https://arxiv.org/pdf/1706.03762",
     ]
+
+
+# ------------------------------------------------------------ 下载重试
+
+
+def _pdf_bytes() -> bytes:
+    return PDF_V7.read_bytes()
+
+
+def test_download_retries_after_a_read_timeout(monkeypatch):
+    """一次读超时不该让用户看到失败：arXiv 这条链路实测会间歇性卡住。"""
+    calls: list[str] = []
+    data = _pdf_bytes()
+
+    def flaky(url: str) -> bytes:
+        calls.append(url)
+        if len(calls) == 1:
+            raise TimeoutError("The read operation timed out")
+        return data
+
+    monkeypatch.setattr(arxiv, "default_fetch", flaky)
+    monkeypatch.setattr(arxiv.time, "sleep", lambda _s: None)
+
+    assert arxiv.download_pdf("1706.03762") == data
+    assert len(calls) == 2, "第二次就该成功"
+
+
+def test_download_gives_up_after_three_attempts_and_says_so(monkeypatch):
+    calls: list[str] = []
+
+    def down(url: str) -> bytes:
+        calls.append(url)
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(arxiv, "default_fetch", down)
+    monkeypatch.setattr(arxiv.time, "sleep", lambda _s: None)
+
+    with pytest.raises(arxiv.FetchError) as excinfo:
+        arxiv.download_pdf("1706.03762")
+
+    assert len(calls) == arxiv.DOWNLOAD_ATTEMPTS
+    message = str(excinfo.value)
+    assert "3 次" in message, "错误里要写明试了几次"
+    assert "拖进文献库" in message, "要给一条不依赖 arXiv 的绕行办法"
+
+
+def test_non_pdf_content_is_not_retried(monkeypatch):
+    """内容不对重试也没用，别让用户白等三倍时间。"""
+    calls: list[str] = []
+    monkeypatch.setattr(
+        arxiv, "default_fetch", _fake_fetch(b"<html>rate limited</html>", calls)
+    )
+
+    with pytest.raises(arxiv.NotPdfError):
+        arxiv.download_pdf("1706.03762")
+
+    assert len(calls) == 1
+
+
+def test_ingest_survives_one_timeout(client, store, monkeypatch):
+    """端到端：第一次超时、第二次成功，用户拿到的是 201 而不是 502。"""
+    calls: list[str] = []
+    data = _pdf_bytes()
+
+    def flaky(url: str) -> bytes:
+        calls.append(url)
+        if len(calls) == 1:
+            raise TimeoutError("The read operation timed out")
+        return data
+
+    monkeypatch.setattr(arxiv, "default_fetch", flaky)
+    monkeypatch.setattr(arxiv.time, "sleep", lambda _s: None)
+
+    r = client.post("/api/tools/arxiv/ingest", json={"arxiv_id": "1706.03762"})
+
+    assert r.status_code == 201, r.text
+    assert r.json()["fetched_bytes"] == len(data)
+
+
+def test_truncated_pdf_is_retried_then_succeeds(monkeypatch):
+    """断流时 read() 不抛异常，只回半截 —— 必须靠 %%EOF 认出来并重下。
+
+    这条是实测里真踩到的：拿到 815KB/2.1MB 的半截 PDF，
+    PyMuPDF 报 "Failed to open file … as type pdf"，而下载那一步"成功"了。
+    """
+    calls: list[str] = []
+    full = _pdf_bytes()
+    truncated = full[: len(full) // 3]
+
+    def flaky(url: str) -> bytes:
+        calls.append(url)
+        return truncated if len(calls) == 1 else full
+
+    monkeypatch.setattr(arxiv, "default_fetch", flaky)
+    monkeypatch.setattr(arxiv.time, "sleep", lambda _s: None)
+
+    assert arxiv.download_pdf("1706.03762") == full
+    assert len(calls) == 2, "半截内容要触发重下，且第二次就该拿到完整文件"
+
+
+def test_truncated_pdf_fails_after_all_attempts(monkeypatch):
+    calls: list[str] = []
+    truncated = _pdf_bytes()[: 100_000]
+
+    def always_short(url: str) -> bytes:
+        calls.append(url)
+        return truncated
+
+    monkeypatch.setattr(arxiv, "default_fetch", always_short)
+    monkeypatch.setattr(arxiv.time, "sleep", lambda _s: None)
+
+    with pytest.raises(arxiv.FetchError) as excinfo:
+        arxiv.download_pdf("1706.03762")
+
+    assert len(calls) == arxiv.DOWNLOAD_ATTEMPTS
+    assert "EOF" in str(excinfo.value), "要说清是半截文件，不是别的网络错误"
+
+
+def test_complete_check_ignores_non_pdf_payloads():
+    # HTML 限流页没有 %PDF 头，不该被当成"没下完"
+    assert arxiv._is_complete_pdf(b"<html>rate limited</html>") is True
+    assert arxiv._is_complete_pdf(_pdf_bytes()) is True
+    assert arxiv._is_complete_pdf(_pdf_bytes()[:1000]) is False

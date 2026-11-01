@@ -117,7 +117,7 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 ## 测试
 
 ```bash
-cd apps/api && uv run pytest -q     # 298 项
+cd apps/api && uv run pytest -q     # 305 项
 ```
 
 覆盖：切块的边界条件、BM25 排序与单复数归并、RRF 去重、守卫的三级匹配、
@@ -158,6 +158,7 @@ Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资
 | `DEEPSEEK_BASE_URL` | 可选，默认 `https://api.deepseek.com` |
 | `LLM_MODEL` | 可选，默认 `deepseek-chat` |
 | `PAPER_STORE_DIR` | 可选，PDF 落盘目录，默认 `data/papers` |
+| `ARXIV_TLS13` | 可选，设 `1` 才允许与 arXiv 协商 TLS 1.3。默认锁 TLS 1.2：实测 1.3 只有 16 KB/s，1.2 是 95 KB/s 以上（见 `docs/EXPERIMENTS.md` E-013） |
 
 `.env` 已在 `.gitignore` 里，密钥不进仓库。
 
@@ -207,6 +208,7 @@ docker run --rm -p 8017:8017 \
 | `LLM_MODEL` | 否 | `deepseek-chat` | 模型名 |
 | `LLM_STREAM_TIMEOUT` | 否 | `60` | 流式响应两次 token 之间的最长等待（秒） |
 | `PAPER_STORE_DIR` | 否 | 本地 `<仓库根>/data/papers`；容器内 `/app/data/papers` | PDF 与 sidecar 落盘目录 |
+| `ARXIV_TLS13` | 否 | 空（锁 TLS 1.2） | 设 `1` 允许与 arXiv 协商 TLS 1.3；1.2 在本机快 6 倍 |
 | `PORT` | 否 | `8017` | 仅 Docker 启动命令使用；应用代码不直接读取 |
 
 `.env.example` 只含占位符。密钥通过 `env_file` / `--env-file` / `-e` 注入，**不要写进 Dockerfile、
