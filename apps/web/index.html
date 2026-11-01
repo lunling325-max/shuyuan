@@ -1623,8 +1623,11 @@ svg{width:100%;height:auto;display:block}
         autoAsk();
       }
       autoCompare();
-      autoCompareOnEnter();
-      autoBilingualOnEnter();   // 深链直接进 #compare 时，等库载完再拉译文
+      // 库载完了再看一眼当前停在哪个视图：点 tab 进来时库可能还没就绪，
+      // 深链直接进 #version / #compare 也是等这一刻才拉得动
+      const hash = location.hash.slice(1);
+      if (hash === 'version') maybeAutoCompare();
+      if (hash === 'compare') ensureCompare();
     } catch (err) {
       $('lib-summary').textContent = '连不上后端';
       showNote(`无法读取文献库：${err.message}`, 'error');
