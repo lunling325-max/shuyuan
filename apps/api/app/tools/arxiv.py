@@ -16,8 +16,8 @@
 检索失败返回 `degraded=True` 而不是抛异常：断网时前端仍然要能打开页面，
 把"没查到"和"查不了"用同一个 200 响应表达，界面才不会白屏。
 
-**下载为什么重试、为什么把 TLS 锁在 1.2**：在这台机器上实测过同一份
-`1706.03762`（2.1MB），arXiv 走 Fastly，握手与吞吐都不稳定 ——
+**下载为什么要重试**：在这台机器上实测过同一份 `1706.03762`（2.1MB），
+arXiv 走 Fastly，握手与吞吐都不稳定 ——
 
 | 条件 | 结果 |
 |---|---|
@@ -25,9 +25,14 @@
 | 锁 TLS 1.2 | 512KB 用了 5.4 s，约 95 KB/s；全量 2.1MB 一次 10.5 s |
 | 同一个 urllib 换成清华 PyPI 镜像 | 848KB / 0.4 s，约 2 MB/s（排除"本机网络慢"） |
 
-而且重试是必需的：锁了 1.2 之后仍有约三分之一的请求一路卡到 socket 超时
-（`The read operation timed out`）。所以下载默认连试 3 次、逐次退避，
-三次都失败才报 502，并在错误里写清"试了几次、可以怎么绕过去"。
+TLS 版本不在这里定，交给 `net`：默认锁 1.2（下载快六倍），连接层面的失败
+就换另一种协议重发一次。
+
+而且重试是必需的：即使协议没错，仍有约三分之一的请求一路卡到 socket 超时
+（`The read operation timed out`）或者 `UNEXPECTED_EOF_WHILE_READING`。
+检索的重试在网络层（`net.fetch_bytes` 重发一次并换协议），
+下载的重试在这一层（连试 3 次、逐次退避），三次都失败才报 502，
+并在错误里写清"试了几次、可以怎么绕过去"。
 检索不重试 —— 它只有 8KB，失败也已经降级成 200，没必要让用户等三倍时间。
 """
 
@@ -48,7 +53,6 @@ USER_AGENT = net.USER_AGENT   # 兼容旧引用；实际请求头由 net 统一�
 TIMEOUT_SECONDS = 15              # 检索：8KB 的小请求，短超时才能快速降级
 DOWNLOAD_TIMEOUT_SECONDS = 60     # 下载：2MB 的 PDF，按实测留足余量
 DOWNLOAD_ATTEMPTS = 3
-SEARCH_ATTEMPTS = 2               # 检索只再试一次：它本来就该快速降级
 RETRY_BACKOFF_SECONDS = 1.0
 MAX_PDF_BYTES = 50 * 1024 * 1024
 
@@ -56,6 +60,7 @@ MAX_PDF_BYTES = 50 * 1024 * 1024
 Fetch = Callable[[str], bytes]
 
 ATOM = "{http://www.w3.org/2005/Atom}"
+ARXIV_NS = "{http://arxiv.org/schemas/atom}"
 
 
 class ArxivError(Exception):
@@ -87,6 +92,9 @@ class ArxivEntry:
     abstract: str = ""
     pdf_url: str = ""
     abs_url: str = ""
+    # 作者自己写的备注，<arxiv:comment>。开源代码地址经常只出现在这里，
+    # 摘要里反而没有 —— 推荐"易复现"的论文时这是关键字段。
+    comment: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,17 +139,22 @@ def normalize_arxiv_id(raw: str) -> str:
 
 
 def default_fetch(url: str) -> bytes:
-    """真实网络请求。UA、超时、半截响应识别都在 `net` 里统一做。
+    """真实网络请求。UA、超时、TLS 版本、半截响应识别都在 `net` 里统一做。
 
     超时按目标 URL 分两档：PDF 是几 MB 的实体，给 60 秒；Atom 是一条 8KB 的
     XML，15 秒就该有结果，慢到那个程度说明链路有问题，早点降级比挂着强。
     这么分而不是给 `Fetch` 加一个 `timeout` 参数 —— 那样每个注入的假 fetch
     都得跟着改签名，而注入契约（给 URL，返回字节）越窄越稳。
+
+    重试次数的分配也一样按 URL 分：**下载不在这里重试**（下面 `_download_with_retry`
+    已经连试三次，再乘一次网络层重试就是九次请求），**检索在这里重试**
+    （它有两条检索式要试，网络层不补的话一次 EOF 就整页降级）。
     """
-    timeout = (
-        DOWNLOAD_TIMEOUT_SECONDS if url.startswith(PDF_URL) else TIMEOUT_SECONDS
-    )
-    return net.fetch_bytes(url, timeout=timeout, max_bytes=MAX_PDF_BYTES)
+    if url.startswith(PDF_URL):
+        return net.fetch_bytes(
+            url, timeout=DOWNLOAD_TIMEOUT_SECONDS, max_bytes=MAX_PDF_BYTES, attempts=1
+        )
+    return net.fetch_bytes(url, timeout=TIMEOUT_SECONDS, max_bytes=MAX_PDF_BYTES)
 
 
 def _fetch(url: str, fetch: Fetch | None) -> bytes:
@@ -203,6 +216,7 @@ def parse_atom(data: bytes) -> list[ArxivEntry]:
                 abstract=_text(node.find(f"{ATOM}summary")),
                 pdf_url=pdf_url or f"{PDF_URL}/{arxiv_id}",
                 abs_url=abs_url or f"https://arxiv.org/abs/{arxiv_id}",
+                comment=_text(node.find(f"{ARXIV_NS}comment")),
             )
         )
 
@@ -231,24 +245,21 @@ def _search_candidates(normalized_query: str) -> list[str]:
 
 
 def _fetch_feed(query: str, limit: int, fetch: Fetch | None) -> list[ArxivEntry]:
-    """取一次检索结果；握手/读超时就重试一次，仍失败抛给调用方去降级。
-
-    重试是因为实测里 `export.arxiv.org` 的 TLS 握手会整段卡死
-    （`handshake operation timed out`），隔一两秒再发就有了。
-    """
     url = (
         f"{API_URL}?search_query={quote(query, safe='')}"
         f"&start=0&max_results={limit}"
     )
-    last_exc: Exception | None = None
-    for attempt in range(1, SEARCH_ATTEMPTS + 1):
-        try:
-            return parse_atom(_fetch(url, fetch))
-        except Exception as exc:  # noqa: BLE001 —— 网络与解析异常五花八门
-            last_exc = exc
-            if attempt < SEARCH_ATTEMPTS:
-                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
-    raise last_exc if last_exc is not None else RuntimeError("arXiv 检索失败")
+    return _fetch_feed_url(url, fetch)
+
+
+def _fetch_feed_url(url: str, fetch: Fetch | None) -> list[ArxivEntry]:
+    """取一次 feed，失败就抛给调用方去降级。
+
+    重试不在这一层：换协议、守间隔的重试在 `net.fetch_bytes`（只有它知道
+    TLS 握手失败和读超时的区别），下载的重试在 `_download_with_retry`。
+    这里再套一层只会让"一个 URL 到底被请求了几次"变得谁也说不清。
+    """
+    return parse_atom(_fetch(url, fetch))
 
 
 def search_arxiv(
@@ -296,6 +307,42 @@ def search_arxiv(
         degraded=False,
         note="整句和拆成关键词都没有匹配到" if len(candidates) > 1 else "",
     )
+
+
+def latest(
+    categories: list[str] | None = None,
+    limit: int = 20,
+    *,
+    fetch: Fetch | None = None,
+) -> SearchResult:
+    """"最新提交"而不是"最相关"：按 `submittedDate` 倒序取整个分类的流。
+
+    这是「arXiv 动态追踪」要的那条数据 —— 检索接口按相关度排序，追踪接口
+    必须按时间排序，否则用户永远看不到今天刚挂出来的论文。
+
+    类别之间用 OR 连接；不给类别就查 cs 下四个大类。失败同样降级成空列表，
+    追踪页在断网时应该显示"这次没刷到"，而不是整页崩掉。
+    """
+    cats = [c.strip() for c in (categories or []) if str(c).strip()] or [
+        "cs.CL", "cs.LG", "cs.AI", "cs.CV",
+    ]
+    limit = max(1, min(int(limit), 100))
+    query = " OR ".join(f"cat:{c}" for c in cats)
+    url = (
+        f"{API_URL}?search_query={quote(query, safe='')}"
+        f"&start=0&max_results={limit}"
+        "&sortBy=submittedDate&sortOrder=descending"
+    )
+    try:
+        entries = _fetch_feed_url(url, fetch)
+    except Exception as exc:  # noqa: BLE001 —— 同检索：网络异常类型不可枚举
+        return SearchResult(
+            query=query,
+            results=[],
+            degraded=True,
+            note=f"arXiv 追踪失败：{str(exc) or type(exc).__name__}",
+        )
+    return SearchResult(query=query, results=entries, degraded=False)
 
 
 def _is_complete_pdf(data: bytes) -> bool:

@@ -517,12 +517,14 @@ def copilot_outline(req: CopilotOutlineRequest) -> CopilotOutlineOut:
 # 放在静态挂载之前，否则 "/" 会先被 StaticFiles 吃掉。
 from app.api.routers import agent as agent_routes  # noqa: E402
 from app.api.routers import dataviz as dataviz_routes  # noqa: E402
+from app.api.routers import recommend as recommend_routes  # noqa: E402
 from app.api.routers import review as review_routes  # noqa: E402
 from app.api.routers import stream as stream_routes  # noqa: E402
 from app.api.routers import tools as tool_routes  # noqa: E402
 from app.api.routers import translate as translate_routes  # noqa: E402
 
 app.include_router(tool_routes.router)
+app.include_router(recommend_routes.router)
 app.include_router(review_routes.router)
 app.include_router(agent_routes.router)
 app.include_router(dataviz_routes.router)

@@ -94,6 +94,8 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 | GET | `/api/graph` | 引用图谱：节点 + 边 + 库内 PageRank + 归一化坐标；`?max_external=N` 控制库外文献数（夹在 0–60） |
 | POST | `/api/copilot/outline` | 论文框架：全库检索 → 编号证据 → 框架；引用由服务端回填，模型编的编号直接丢弃 |
 | POST | `/api/review` | 综述 + Future Work：多查询扩展召回，参考文献表与目录页永不进证据 |
+| GET | `/api/recommend` | arXiv 最新提交 × 本地库相关性 × 开源代码的推荐，带逐条推荐理由；`?fresh=true` 绕过 15 分钟缓存 |
+| POST | `/api/recommend/vote` | 点赞/踩（再投同一票=取消），按用户分开落盘 |
 | GET | `/api/tools/search` | 多来源检索：arXiv / OpenAlex / Crossref / Semantic Scholar / Zenodo 并发查、跨站去重，每站各自 `degraded`，`?sources=` 选站 |
 | GET | `/api/tools/arxiv/search` | 只查 arXiv（断网时 `degraded=true`，不报 500） |
 | POST | `/api/tools/arxiv/ingest` | 检索结果直接入库：下载 → 解析 → 去重 |
@@ -118,7 +120,7 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 ## 测试
 
 ```bash
-cd apps/api && uv run pytest -q     # 323 项
+cd apps/api && uv run pytest -q     # 352 项
 ```
 
 覆盖：切块的边界条件、BM25 排序与单复数归并、RRF 去重、守卫的三级匹配、
@@ -159,7 +161,8 @@ Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资
 | `DEEPSEEK_BASE_URL` | 可选，默认 `https://api.deepseek.com` |
 | `LLM_MODEL` | 可选，默认 `deepseek-chat` |
 | `PAPER_STORE_DIR` | 可选，PDF 落盘目录，默认 `data/papers` |
-| `ARXIV_TLS13` | 可选，设 `1` 才允许与 arXiv 协商 TLS 1.3。默认锁 TLS 1.2：实测 1.3 只有 16 KB/s，1.2 是 95 KB/s 以上（见 `docs/EXPERIMENTS.md` E-013） |
+| `RESEARCH_PROXY` | 可选。默认**直连、不走系统代理**（这台机器的注册表代理会让每次请求多绕一跳，实测直连 1.7 秒、走代理 3 秒起）；填 `system` 用回系统代理，填 `http://host:port` 用指定代理（见 `docs/EXPERIMENTS.md` E-016） |
+| `ARXIV_TLS13` | 可选，设 `1` 就只用默认协议、不退回 TLS 1.2。不设时按主机自动选：连接建不起来就换另一种协议重发一次，哪种成功记住了（见 `docs/EXPERIMENTS.md` E-013、E-016） |
 | `SEMANTIC_SCHOLAR_API_KEY` | 可选。不配时 Semantic Scholar 作为一个来源会被限流（429），界面如实标注「暂不可用」，其余来源不受影响 |
 
 `.env` 已在 `.gitignore` 里，密钥不进仓库。
@@ -210,7 +213,8 @@ docker run --rm -p 8017:8017 \
 | `LLM_MODEL` | 否 | `deepseek-chat` | 模型名 |
 | `LLM_STREAM_TIMEOUT` | 否 | `60` | 流式响应两次 token 之间的最长等待（秒） |
 | `PAPER_STORE_DIR` | 否 | 本地 `<仓库根>/data/papers`；容器内 `/app/data/papers` | PDF 与 sidecar 落盘目录 |
-| `ARXIV_TLS13` | 否 | 空（锁 TLS 1.2） | 设 `1` 允许与 arXiv 协商 TLS 1.3；1.2 在本机快 6 倍 |
+| `RESEARCH_PROXY` | 否 | 空（直连） | 默认绕开系统代理；填 `system` 用回系统代理，填 `http://host:port` 用指定代理 |
+| `ARXIV_TLS13` | 否 | 空（按主机自动在 1.3 / 1.2 之间试） | 设 `1` 只走默认协议，不再退回 TLS 1.2 |
 | `SEMANTIC_SCHOLAR_API_KEY` | 否 | 空 | 填了才走 Semantic Scholar；不填则这一路稳定 429，界面标为「暂不可用」 |
 | `PORT` | 否 | `8017` | 仅 Docker 启动命令使用；应用代码不直接读取 |
 

@@ -153,6 +153,8 @@ h1{font-size:var(--fs-xl);margin:0 0 2px;letter-spacing:-.015em}
   white-space:nowrap;flex:none;
 }
 .btn:hover{border-color:var(--axis)}
+/* 自己投过票的那个按钮要看得出来投过（再点一下就是取消） */
+.btn[aria-pressed="true"]{border-color:var(--s1);color:var(--s1);background:var(--wash)}
 .btn.primary{background:var(--s1);border-color:var(--s1);color:#fff;font-weight:560}
 .btn.primary:hover{filter:brightness(1.06)}
 .btn.ghost{background:none;border-color:transparent;color:var(--ink-2)}
@@ -625,6 +627,7 @@ svg{width:100%;height:auto;display:block}
     <button data-v="compare" role="tab" aria-controls="view-compare" aria-selected="false">中英对照</button>
     <button data-v="graph" role="tab" aria-controls="view-graph" aria-selected="false">引用图谱</button>
     <button data-v="retrieve" role="tab" aria-controls="view-retrieve" aria-selected="false">文献检索</button>
+    <button data-v="recommend" role="tab" aria-controls="view-recommend" aria-selected="false">每日推荐</button>
     <button data-v="review" role="tab" aria-controls="view-review" aria-selected="false">学术综述</button>
     <button data-v="agent" role="tab" aria-controls="view-agent" aria-selected="false">任务 Agent</button>
     <button data-v="copilot" role="tab" aria-controls="view-copilot" aria-selected="false">写作 Copilot</button>
@@ -849,6 +852,29 @@ svg{width:100%;height:auto;display:block}
   </div>
 </section>
 
+<!-- ==================== 每日推荐（arXiv 追踪）==================== -->
+<section class="view fill" id="view-recommend" role="tabpanel" aria-label="每日推荐">
+  <div class="retrieve">
+    <div class="card col">
+      <h1 style="font-size:var(--fs-lg)">最近挂在 arXiv 上的论文，按你库里的方向排</h1>
+      <div class="bar" style="margin-bottom:var(--sp-2)">
+        <div class="composer" style="flex:1">
+          <input id="rec-cats" aria-label="arXiv 分类" value="cs.CL,cs.LG,cs.AI,cs.CV"
+                 placeholder="arXiv 分类，逗号分隔，比如 cs.CL,cs.LG">
+        </div>
+        <label class="pick">最近
+          <select id="rec-days" aria-label="时间窗">
+            <option>3</option><option selected>7</option><option>14</option><option>30</option>
+          </select> 天
+        </label>
+        <button class="btn primary" id="rec-run" type="button">刷新</button>
+      </div>
+      <span class="sub" id="rec-state" style="margin:0"></span>
+      <div id="rec-out" style="margin-top:14px"></div>
+    </div>
+  </div>
+</section>
+
 <!-- ==================== 学术综述 ==================== -->
 <section class="view fill" id="view-review" role="tabpanel" aria-label="学术综述">
   <div class="review">
@@ -1024,8 +1050,8 @@ svg{width:100%;height:auto;display:block}
   /* ---------------------------------------------------------------- 视图路由
      hash 路由：刷新、直接粘贴链接、后退都能回到同一个视图。
      这也让自动截图可以逐屏定位（#reader / #graph …）。 */
-  const VIEWS = ['library', 'reader', 'version', 'compare', 'graph', 'retrieve', 'review',
-    'agent', 'copilot'];
+  const VIEWS = ['library', 'reader', 'version', 'compare', 'graph', 'retrieve', 'recommend',
+    'review', 'agent', 'copilot'];
   const nav = document.getElementById('nav');
   const viewEls = [...document.querySelectorAll('.view')];
   const main = document.querySelector('main');
@@ -3420,6 +3446,117 @@ svg{width:100%;height:auto;display:block}
     }
   }
 
+  /* ---------------------------------------------------------------- 每日推荐
+
+     推荐理由是后端按真实数字拼出来的（重合几篇、哪几篇、代码地址、几天前提交），
+     不是模型写的一句话 —— 所以这里只负责原样展示，不做任何润色。
+     点赞/踩落盘在后端，刷新页面还在。 */
+  const REC = { busy: false, loaded: false, data: null };
+
+  async function loadRecommend(fresh = false) {
+    if (REC.busy) return;
+    REC.busy = true;
+    $('rec-run').disabled = true;
+    $('rec-out').replaceChildren(skeleton(3));
+    $('rec-state').textContent = '正在刷新 arXiv 最新提交…';
+    try {
+      const cats = encodeURIComponent($('rec-cats').value.trim());
+      const days = Number($('rec-days').value) || 7;
+      const data = await api(`/recommend?categories=${cats}&days=${days}&limit=12${fresh ? '&fresh=true' : ''}`);
+      REC.data = data;
+      REC.loaded = true;
+      renderRecommend(data);
+    } catch (err) {
+      $('rec-state').textContent = '刷新失败';
+      $('rec-out').replaceChildren(el('p', { class: 'note', style: 'color:var(--warn)' },
+        `推荐没取到：${err.message}`));
+    } finally {
+      REC.busy = false;
+      $('rec-run').disabled = false;
+    }
+  }
+
+  function renderRecommend(data) {
+    const parts = [`${data.items.length} 篇`, `时间窗 ${data.days} 天`];
+    parts.push(data.library_size ? `比对库里 ${data.library_size} 篇` : '文献库为空，暂按时间与开源情况排');
+    if (data.cached) parts.push('缓存（15 分钟内不重复出网）');
+    $('rec-state').textContent = parts.join(' · ');
+
+    const out = $('rec-out');
+    if (data.degraded && !data.items.length) {
+      out.replaceChildren(el('p', { class: 'note', style: 'margin:0;color:var(--warn)' },
+        `${data.note || 'arXiv 这次没返回数据'}。稍后再点「刷新」即可，库里的文献不受影响。`));
+      return;
+    }
+    if (!data.items.length) {
+      out.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
+        '这个时间窗里没有新提交，把天数调大一点再试。'));
+      return;
+    }
+    out.replaceChildren(...data.items.map(recRow));
+  }
+
+  function recRow(r) {
+    const actions = [];
+    if (r.arxiv_id) {
+      const btn = el('button', { class: 'btn', type: 'button' }, '入库');
+      btn.addEventListener('click', () => ingestArxiv(r, btn));
+      actions.push(btn);
+    }
+    actions.push(
+      el('button', { class: 'btn', type: 'button', 'aria-pressed': String(r.my_vote === 'up') },
+        `有用 ${r.votes_up}`),
+      el('button', { class: 'btn', type: 'button', 'aria-pressed': String(r.my_vote === 'down') },
+        `没用 ${r.votes_down}`),
+    );
+    if (r.code_url) {
+      actions.push(el('a', { class: 'sub', href: r.code_url, target: '_blank', rel: 'noopener',
+        style: 'margin:0' }, '开源代码 →'));
+    }
+    if (r.abs_url) {
+      actions.push(el('a', { class: 'sub', href: r.abs_url, target: '_blank', rel: 'noopener',
+        style: 'margin:0' }, 'arXiv 页面 →'));
+    }
+
+    const names = r.authors.length > 3
+      ? `${r.authors.slice(0, 3).join('、')} 等 ${r.authors.length} 人`
+      : r.authors.join('、');
+    const meta = [names, r.published, `arXiv:${r.arxiv_id}`].filter(Boolean).join(' · ');
+    const card = el('div', { class: 'hitrow', style: 'margin-bottom:10px' },
+      el('h4', {}, r.title),
+      el('div', { class: 'meta' }, meta),
+      el('p', { class: 'note', style: 'margin:6px 0;color:var(--ink-2)' },
+        `为什么推给你：${r.reason}`),
+      el('div', { class: 'act' }, ...actions));
+
+    // 两个投票按钮的点击要落在具体这一条上，所以在这里绑，不进循环外
+    const [upBtn, downBtn] = actions.slice(1, 3);
+    upBtn.addEventListener('click', () => voteRec(card, r, 'up', upBtn, downBtn));
+    downBtn.addEventListener('click', () => voteRec(card, r, 'down', upBtn, downBtn));
+    return card;
+  }
+
+  async function voteRec(row, r, vote, upBtn, downBtn) {
+    // 再点同一票 = 取消，和后端的语义一致
+    const next = r.my_vote === vote ? '' : vote;
+    try {
+      const data = await api('/recommend/vote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ arxiv_id: r.arxiv_id, vote: next }),
+      });
+      r.votes_up = data.votes_up;
+      r.votes_down = data.votes_down;
+      r.my_vote = data.my_vote;
+      upBtn.textContent = `有用 ${data.votes_up}`;
+      downBtn.textContent = `没用 ${data.votes_down}`;
+      upBtn.setAttribute('aria-pressed', String(data.my_vote === 'up'));
+      downBtn.setAttribute('aria-pressed', String(data.my_vote === 'down'));
+    } catch (err) {
+      showNote(`投票没记上：${err.message}`, 'error');
+    }
+  }
+
   /* ---------------------------------------------------------------- 学术综述
 
      与写作 Copilot 同一套规矩：模型只返回证据编号，引用原文由服务端回填。
@@ -3713,6 +3850,9 @@ svg{width:100%;height:auto;display:block}
 
   $('arx-run')?.addEventListener('click', runArxiv);
   $('arx-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runArxiv(); });
+  $('rec-run')?.addEventListener('click', () => loadRecommend(true));
+  $('rec-days')?.addEventListener('change', () => loadRecommend());
+  $('rec-cats')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadRecommend(); });
   sourceButtons().forEach((btn) => btn.addEventListener('click', () => {
     // 「全部」是按一下全选、再按一下全不选
     if (!btn.dataset.src) {
@@ -3732,9 +3872,6 @@ svg{width:100%;height:auto;display:block}
   $('rv-topic')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runReview(); });
 
   $('ag-plan')?.addEventListener('click', () => runAgent('plan'));
-  // 工具清单仍然是"进到这个视图才拉"，但触发点在下面的 enterView()：
-  // 点导航栏走的是 replaceState，不会发 hashchange
-  if (location.hash.slice(1) === 'agent') loadAgentTools();
   $('ag-run')?.addEventListener('click', () => runAgent('run'));
   $('ag-task')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent('run'); });
 
@@ -3797,9 +3934,6 @@ svg{width:100%;height:auto;display:block}
   $('qa-send')?.addEventListener('click', ask);
   $('qa-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') ask(); });
 
-  // 图谱按需建：要解析全部参考文献，没必要开机就做
-  const maybeLoadGraph = () => { if (location.hash === '#graph') loadGraph(); };
-
   /* 进视图的统一入口：导航点击、hashchange、方向键切 tab 最后都落到 activate()，
      由 activate() 调这里。以前每个加载器自己挂 hashchange，只有点导航栏时什么都不发生。 */
   const VIEW_ENTER = {
@@ -3809,6 +3943,8 @@ svg{width:100%;height:auto;display:block}
     agent: () => loadAgentTools(),      // AG.tools 有缓存，进来一次就够
     // 检索 / 综述是"进来就要打字"的视图：把光标放进输入框，点了立刻有反应
     retrieve: () => $('arx-q')?.focus(),
+    // 推荐页进来就拉一次；之后再进来用已经拉到的，别每点一次等九秒
+    recommend: () => { if (!REC.loaded) loadRecommend(); },
     review: () => $('rv-topic')?.focus(),
   };
   function enterView(name) {
@@ -3820,7 +3956,11 @@ svg{width:100%;height:auto;display:block}
   window.__enterView = enterView;
 
   loadPapers();
-  maybeLoadGraph();
+  /* 首屏就落在某个视图时补一次：上面那个脚本块 activate() 得比这里早，
+     那时 __enterView 还不存在，进视图该做的事就漏掉了 —— 直接打开
+     `#agent`、`#recommend` 会看到一个空白的页。这里统一补上，
+     以后加视图不用再各写一句"if hash 是 xx 就加载"。 */
+  if (location.hash.slice(1)) enterView(location.hash.slice(1));
 })();
 </script>
 </body>

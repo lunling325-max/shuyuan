@@ -401,24 +401,26 @@ def test_phrase_miss_falls_back_to_loose_words(monkeypatch):
     assert "精确匹配" in result.note, "要说清这批不是精确匹配"
 
 
-def test_search_retries_once_after_handshake_timeout(monkeypatch):
-    """握手卡死是实测过的常态，隔一下再发就能通，别让用户看到"不可达"。"""
+def test_search_reaches_the_degraded_path_when_the_fetch_keeps_failing(monkeypatch):
+    """重试在网络层；到了这一层还失败，就该干脆降级，而不是再试一遍。
+
+    `fetch` 的契约是"一个 URL 一次机会"。arxiv 层套自己的重试循环会让人
+    数不清一个检索到底打了几次 —— 实测那次 429 就是这么把自己打进封禁窗口的。
+    """
     calls: list[str] = []
 
     def flaky(url: str) -> bytes:
         calls.append(url)
-        if len(calls) == 1:
-            raise TimeoutError("The handshake operation timed out")
-        return ATOM_FEED
+        raise TimeoutError("The handshake operation timed out")
 
     monkeypatch.setattr(arxiv, "default_fetch", flaky)
     monkeypatch.setattr(arxiv.time, "sleep", lambda _s: None)
 
     result = arxiv.search_arxiv("attention", limit=5)
 
-    assert result.degraded is False
-    assert len(calls) == 2
-    assert result.results
+    assert result.degraded is True
+    assert len(calls) == 1
+    assert "检索失败" in result.note
 
 
 def test_quotes_in_user_query_do_not_break_the_syntax():
