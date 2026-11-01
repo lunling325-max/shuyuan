@@ -492,6 +492,11 @@ svg{width:100%;height:auto;display:block}
 /* 结果条目是可增长的，卡片不该撑满整屏留一大片空白：让整列滚，卡片按内容长 */
 .retrieve{height:100%;overflow:auto}
 .retrieve .col{padding:16px}
+/* 文献检索 / 学术综述的检索条：输入框吃掉剩余宽度，选择器与按钮排在它右边。
+   以前 `.bar` 只在"中英对照"和"版本谱系"里定义过 display:flex，
+   这两个视图里它其实是一个普通块 —— 输入框独占一行，按钮掉到第二行。 */
+.retrieve .bar,.review .bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.retrieve .bar .composer,.review .bar .composer{flex:1;min-width:200px}
 .review{display:grid;grid-template-columns:1fr 1fr;gap:14px;height:100%}
 .review .col{overflow:auto;padding:16px}
 .agent{display:grid;grid-template-columns:1fr 1fr;gap:14px;height:100%}
@@ -531,6 +536,19 @@ svg{width:100%;height:auto;display:block}
 .hitrow .abs{font-size:var(--fs-xs);color:var(--ink-2);line-height:1.55;
   display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .hitrow .act{display:flex;gap:var(--sp-2);align-items:center;margin-top:9px}
+/* 来源开关：默认全开，点一下关掉一路。开着是底色块，关着只剩描边 ——
+   不靠颜色也能分辨（一个是实心、一个是空心）。 */
+.srcbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 var(--sp-3)}
+.srcbar .lbl{font-size:var(--fs-xs);color:var(--ink-3);margin-right:2px}
+.src{
+  padding:3px 11px;border-radius:999px;border:1px solid var(--hair);
+  background:transparent;color:var(--ink-3);font-size:var(--fs-xs);cursor:pointer;
+  transition:background .12s ease,color .12s ease;
+}
+/* 选中 = 蓝底 + 蓝字 + 加粗。只用一层浅灰底太弱，高亮不出来的开关等于没选 */
+.src[aria-pressed="true"]{background:var(--wash);color:var(--s1);border-color:transparent;font-weight:560}
+.src:hover{border-color:var(--ink-3)}
+.src[aria-pressed="true"]:hover{border-color:var(--s1)}
 .docline{height:9px;border-radius:4px;background:var(--hair);margin:7px 0}
 .docline.w80{width:80%}.docline.w60{width:60%}.docline.w90{width:90%}.docline.w45{width:45%}
 .docline.t{height:13px;background:var(--axis)}
@@ -805,25 +823,28 @@ svg{width:100%;height:auto;display:block}
   </div>
 </section>
 
-<!-- ==================== 文献检索（arXiv）==================== -->
+<!-- ==================== 文献检索（多来源）==================== -->
 <section class="view fill" id="view-retrieve" role="tabpanel" aria-label="文献检索">
   <div class="retrieve">
     <div class="card col">
-      <h1 style="font-size:var(--fs-lg)">从 arXiv 检索并入库</h1>
-      <p class="sub">检索 → 下载 → 解析入库，全程可看到每一步；同一份 PDF 按内容哈希去重，不会进两份</p>
-      <div class="bar" style="margin-bottom:var(--sp-3)">
+      <h1 style="font-size:var(--fs-lg)">从多个学术站点检索并入库</h1>
+      <div class="bar" style="margin-bottom:var(--sp-2)">
         <div class="composer" style="flex:1">
-          <input id="arx-q" aria-label="检索 arXiv" placeholder="比如：sparse attention long document retrieval">
+          <input id="arx-q" aria-label="检索论文" placeholder="比如：sparse attention long document retrieval">
         </div>
-        <label class="pick">返回条数 <select id="arx-limit" aria-label="返回条数">
-          <option>3</option><option selected>5</option><option>8</option>
-        </select></label>
         <button class="btn primary" id="arx-run">检索</button>
       </div>
-      <span class="sub" id="arx-state" style="margin:0"></span>
-      <div id="arx-out" style="margin-top:14px">
-        <p class="note" style="margin:0">输入关键词后点「检索」。入库的论文会立刻出现在文献库里。</p>
+      <div class="srcbar" role="group" aria-label="选择检索来源">
+        <span class="lbl">来源</span>
+        <button class="src" type="button" data-src="" aria-pressed="true">全部</button>
+        <button class="src" type="button" data-src="arxiv" aria-pressed="true">arXiv</button>
+        <button class="src" type="button" data-src="openalex" aria-pressed="true">OpenAlex</button>
+        <button class="src" type="button" data-src="crossref" aria-pressed="true">Crossref</button>
+        <button class="src" type="button" data-src="semanticscholar" aria-pressed="true">Semantic Scholar</button>
+        <button class="src" type="button" data-src="zenodo" aria-pressed="true">Zenodo</button>
       </div>
+      <span class="sub" id="arx-state" style="margin:0"></span>
+      <div id="arx-out" style="margin-top:14px"></div>
     </div>
   </div>
 </section>
@@ -3261,22 +3282,50 @@ svg{width:100%;height:auto;display:block}
 
   /* ---------------------------------------------------------------- 文献检索
 
-     工具链是"检索 → 下载 → 解析入库"三件事，界面上也分三步显示状态：
+     一次查询打四个站点，后端并发去重，这里只负责把"哪些站通了、哪些没通"
+     摊开说清楚。工具链是"检索 → 下载 → 解析入库"三件事，界面上也分三步显示状态：
      用户点「入库」之后要能看见它在下载、在解析，而不是转圈两秒后突然多一条。
-     断网不报错：arXiv 不可达时后端返回 degraded，这里如实说明。 */
+
+     为什么没有"条数"下拉：任何来源都有深不见底的翻页，给个"全部"就是给一个
+     永远不会到来的响应。每站固定取 25 条（后端 MAX_LIMIT=50），去重后通常更少 ——
+     把选项砍掉，比留一个"3/5/8"让人以为这就是天花板更诚实。 */
   const ARX = { busy: false, data: null };
+  const SOURCE_LABEL = {
+    arxiv: 'arXiv', openalex: 'OpenAlex', crossref: 'Crossref',
+    semanticscholar: 'Semantic Scholar', zenodo: 'Zenodo',
+  };
+  /* 来源按钮：**点一下是选中，不是关掉**，而且可以同时选好几个站。
+
+     默认「全部」亮着 = 五个站都查。这时点某个站，理解为"就查它"（收窄），
+     于是只剩它亮；之后再点别的站是**追加**，几个站一起亮就是一起查。
+     点「全部」回到全选。至少留一个是底线。
+
+     为什么不是一开始的"开关"写法：那种写法里默认全开，用户点 arXiv 的
+     本意是"查 arXiv"，结果那一栏反而被关掉了 —— 点了半天是反的。 */
+  const sourceButtons = () => [...document.querySelectorAll('#view-retrieve .src')];
+  const siteButtons = () => sourceButtons().filter((b) => b.dataset.src);
+  const isOn = (btn) => btn.getAttribute('aria-pressed') === 'true';
+  const allButton = () => sourceButtons().find((b) => !b.dataset.src);
+  const pickedSources = () => siteButtons().filter(isOn).map((b) => b.dataset.src);
+  const syncAllChip = () =>
+    allButton().setAttribute('aria-pressed', String(siteButtons().every(isOn)));
 
   async function runArxiv() {
     const q = $('arx-q').value.trim();
     if (!q) { $('arx-state').textContent = '先写检索词'; return; }
+    const picked = pickedSources();
+    // 全不选是允许的（"全部"再按一次就取消全选），但那样查不出东西，得说清楚
+    if (!picked.length) { $('arx-state').textContent = '先选来源：点「全部」或点上面对应的站'; return; }
     if (ARX.busy) return;
     ARX.busy = true;
     $('arx-run').disabled = true;
     $('arx-out').replaceChildren(skeleton(3));
-    $('arx-state').textContent = '查询 arXiv…';
+    $('arx-state').textContent =
+      `正在查询 ${picked.map((s) => SOURCE_LABEL[s] || s).join('、')}…`;
     try {
-      const limit = Number($('arx-limit').value) || 5;
-      const data = await api(`/tools/arxiv/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+      // 总是把 sources 显式传过去：默认全选是前端的默认值，不是后端的隐含约定
+      const data = await api(
+        `/tools/search?q=${encodeURIComponent(q)}&sources=${encodeURIComponent(picked.join(','))}`);
       ARX.data = data;
       renderArxivHits(data);
     } catch (err) {
@@ -3290,33 +3339,58 @@ svg{width:100%;height:auto;display:block}
   }
 
   function renderArxivHits(data) {
-    $('arx-state').textContent = data.degraded
-      ? `arXiv 不可达：${data.note}`
-      : `${data.results.length} 条结果`;
+    const ok = data.sources.filter((s) => s.ok);
+    const bad = data.sources.filter((s) => !s.ok);
+    const parts = [`${data.hits.length} 条结果`];
+    if (ok.length) parts.push(`${ok.map((s) => s.label).join('、')} 已返回`);
+    if (bad.length) parts.push(`${bad.map((s) => s.label).join('、')} 暂不可用`);
+    $('arx-state').textContent = parts.join(' · ');
+
     const out = $('arx-out');
-    if (!data.results.length) {
+    if (!data.hits.length) {
       out.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
-        data.degraded
-          ? '这次没取到结果。检索词已收到，网络通了再点一次即可 —— 库里的文献不受影响。'
-          : '没有匹配的结果，换个更具体的检索词试试。'));
+        ok.length
+          ? '没有匹配的结果，换个更具体的检索词试试。'
+          : '这次没取到结果。检索词已收到，网络通了再点一次即可 —— 库里的文献不受影响。'));
       return;
     }
-    out.replaceChildren(...data.results.map(hitRow));
+    // 降级信息单独一行：结果照常给，但不能假装"这就是全部"
+    const warn = bad.length
+      ? [el('p', { class: 'note', style: 'margin:0 0 10px;color:var(--warn)' },
+        `以下来源这次没取到：${bad.map((s) => `${s.label}（${s.note}）`).join('；')}`)]
+      : [];
+    out.replaceChildren(...warn, ...data.hits.map(hitRow));
   }
 
   function hitRow(r) {
-    const btn = el('button', { class: 'btn', type: 'button' }, '入库');
-    btn.addEventListener('click', () => ingestArxiv(r, btn));
+    // 只有能定位到 arXiv id 的才给「入库」；别的站有 PDF 也走不了这条通道
+    const actions = [];
+    if (r.can_ingest) {
+      const btn = el('button', { class: 'btn', type: 'button' }, '入库');
+      btn.addEventListener('click', () => ingestArxiv(r, btn));
+      actions.push(btn);
+    }
+    if (r.abs_url) {
+      actions.push(el('a', { class: 'sub', href: r.abs_url, target: '_blank', rel: 'noopener',
+        style: 'margin:0' }, r.can_ingest ? 'arXiv 页面 →' : '原文 →'));
+    }
+    if (r.pdf_url && r.pdf_url !== r.abs_url) {
+      actions.push(el('a', { class: 'sub', href: r.pdf_url, target: '_blank', rel: 'noopener',
+        style: 'margin:0' }, 'PDF →'));
+    }
+
     const names = r.authors.length > 3
       ? `${r.authors.slice(0, 3).join('、')} 等 ${r.authors.length} 人`
       : r.authors.join('、');
+    const meta = [names, r.year, r.venue, r.arxiv_id ? `arXiv:${r.arxiv_id}` : '']
+      .filter(Boolean).join(' · ');
     return el('div', { class: 'hitrow', style: 'margin-bottom:10px' },
       el('h4', {}, r.title),
-      el('div', { class: 'meta' }, `${names} · ${r.published} · arXiv:${r.arxiv_id}`),
-      el('p', { class: 'abs' }, r.abstract),
-      el('div', { class: 'act' }, btn,
-        el('a', { class: 'sub', href: r.abs_url, target: '_blank', rel: 'noopener',
-          style: 'margin:0' }, 'arXiv 页面 →')));
+      el('div', { class: 'meta' },
+        el('span', { class: 'chip', style: 'margin-right:6px' }, SOURCE_LABEL[r.source] || r.source),
+        meta || '（这条没有元数据）'),
+      r.abstract ? el('p', { class: 'abs' }, r.abstract) : '',
+      el('div', { class: 'act' }, ...actions));
   }
 
   async function ingestArxiv(hit, btn) {
@@ -3639,6 +3713,21 @@ svg{width:100%;height:auto;display:block}
 
   $('arx-run')?.addEventListener('click', runArxiv);
   $('arx-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runArxiv(); });
+  sourceButtons().forEach((btn) => btn.addEventListener('click', () => {
+    // 「全部」是按一下全选、再按一下全不选
+    if (!btn.dataset.src) {
+      const turnOn = !siteButtons().every(isOn);
+      siteButtons().forEach((b) => b.setAttribute('aria-pressed', String(turnOn)));
+    } else if (siteButtons().every(isOn)) {
+      // 全选状态下点某个站 = "就查它一个"（这时候点它是想选中，不是想取消）
+      siteButtons().forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+    } else {
+      btn.setAttribute('aria-pressed', String(!isOn(btn)));
+    }
+    syncAllChip();
+    // 高亮本身已经说清选了谁，不再往状态行里重复一遍
+    $('arx-state').textContent = '';
+  }));
   $('rv-run')?.addEventListener('click', runReview);
   $('rv-topic')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runReview(); });
 

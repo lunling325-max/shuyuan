@@ -33,22 +33,22 @@
 
 from __future__ import annotations
 
-import os
 import re
-import ssl
 import time
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable
 from urllib.parse import quote
 from xml.etree import ElementTree
 
+from app.tools import net
+
 API_URL = "https://export.arxiv.org/api/query"
 PDF_URL = "https://arxiv.org/pdf"
-USER_AGENT = "ResearchAgent/0.1 (arxiv-tools; local competition demo)"
+USER_AGENT = net.USER_AGENT   # 兼容旧引用；实际请求头由 net 统一加
 TIMEOUT_SECONDS = 15              # 检索：8KB 的小请求，短超时才能快速降级
 DOWNLOAD_TIMEOUT_SECONDS = 60     # 下载：2MB 的 PDF，按实测留足余量
 DOWNLOAD_ATTEMPTS = 3
+SEARCH_ATTEMPTS = 2               # 检索只再试一次：它本来就该快速降级
 RETRY_BACKOFF_SECONDS = 1.0
 MAX_PDF_BYTES = 50 * 1024 * 1024
 
@@ -130,35 +130,8 @@ def normalize_arxiv_id(raw: str) -> str:
     return match.group("base")
 
 
-def _tls_context() -> ssl.SSLContext:
-    """arXiv 用的 TLS 上下文：默认把最高版本锁到 1.2。
-
-    这不是"为了兼容"而降级，是实测出来的：同一台机器、同一个 urllib，
-    协商到 TLS 1.3 时只有约 16 KB/s，锁 1.2 后是 95 KB/s 以上（完整数据见模块
-    文档）。1.2 仍然是现行的安全版本，只是不再谈判 1.3。
-    设 `ARXIV_TLS13=1` 可以关掉这个上限，方便换机器复验。
-    """
-    context = ssl.create_default_context()
-    if os.environ.get("ARXIV_TLS13", "").strip().lower() not in ("1", "true", "yes"):
-        context.maximum_version = ssl.TLSVersion.TLSv1_2
-    return context
-
-
-_OPENER: urllib.request.OpenerDirector | None = None
-
-
-def _opener() -> urllib.request.OpenerDirector:
-    """复用同一个 opener：每次新建都要重新做一次 DNS + 握手。"""
-    global _OPENER
-    if _OPENER is None:
-        _OPENER = urllib.request.build_opener(
-            urllib.request.HTTPSHandler(context=_tls_context())
-        )
-    return _OPENER
-
-
 def default_fetch(url: str) -> bytes:
-    """真实网络请求。带 UA 与超时；最多读 50MB+1，超限能在下载后立刻发现。
+    """真实网络请求。UA、超时、半截响应识别都在 `net` 里统一做。
 
     超时按目标 URL 分两档：PDF 是几 MB 的实体，给 60 秒；Atom 是一条 8KB 的
     XML，15 秒就该有结果，慢到那个程度说明链路有问题，早点降级比挂着强。
@@ -168,15 +141,7 @@ def default_fetch(url: str) -> bytes:
     timeout = (
         DOWNLOAD_TIMEOUT_SECONDS if url.startswith(PDF_URL) else TIMEOUT_SECONDS
     )
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with _opener().open(request, timeout=timeout) as response:
-        data = response.read(MAX_PDF_BYTES + 1)
-        # 断流时 read() 可能"正常"返回半截内容 —— 不抛异常，len() 才看得出来。
-        # 声明了 Content-Length 就必须一斤不少，否则当成失败交给上层重试
-        declared = response.headers.get("Content-Length")
-        if declared is not None and declared.isdigit() and len(data) < int(declared):
-            raise OSError(f"下载被截断：只收到 {len(data)}/{declared} 字节")
-    return data
+    return net.fetch_bytes(url, timeout=timeout, max_bytes=MAX_PDF_BYTES)
 
 
 def _fetch(url: str, fetch: Fetch | None) -> bytes:
@@ -244,6 +209,48 @@ def parse_atom(data: bytes) -> list[ArxivEntry]:
     return entries
 
 
+def _search_candidates(normalized_query: str) -> list[str]:
+    """把用户输入翻成 arXiv 的检索式，先整句、再退化成按词搜。
+
+    为什么必须先整句：arXiv 的 `all:` 只绑定紧随其后的**一个**词，
+    `all:attention is all you need` 实际是"五个词各自匹配"，相关性排序里
+    真正那篇《Attention Is All You Need》根本进不了前五（实测）。写成
+    `all:"attention is all you need"` 之后它稳定出现在第 2 位、`ti:"…"` 第 1 位。
+
+    但整句对"我只有主题、没有标题"的检索太苛刻（短语必须原样出现），
+    所以整句 0 命中时再按词搜一次 —— 那时候宁可宽，也不要空。
+
+    引号和反斜杠是 arXiv 查询语法的一部分，用户输入里出现就把它们抹掉，
+    否则一个多余的 `"` 会把整个检索式变成语法错误。
+    """
+    cleaned = " ".join(normalized_query.replace('"', " ").replace("\\", " ").split())
+    candidates = [f'all:"{cleaned}"']
+    if " " in cleaned:
+        candidates.append(f"all:{cleaned}")
+    return candidates
+
+
+def _fetch_feed(query: str, limit: int, fetch: Fetch | None) -> list[ArxivEntry]:
+    """取一次检索结果；握手/读超时就重试一次，仍失败抛给调用方去降级。
+
+    重试是因为实测里 `export.arxiv.org` 的 TLS 握手会整段卡死
+    （`handshake operation timed out`），隔一两秒再发就有了。
+    """
+    url = (
+        f"{API_URL}?search_query={quote(query, safe='')}"
+        f"&start=0&max_results={limit}"
+    )
+    last_exc: Exception | None = None
+    for attempt in range(1, SEARCH_ATTEMPTS + 1):
+        try:
+            return parse_atom(_fetch(url, fetch))
+        except Exception as exc:  # noqa: BLE001 —— 网络与解析异常五花八门
+            last_exc = exc
+            if attempt < SEARCH_ATTEMPTS:
+                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+    raise last_exc if last_exc is not None else RuntimeError("arXiv 检索失败")
+
+
 def search_arxiv(
     query: str,
     limit: int = 5,
@@ -262,13 +269,18 @@ def search_arxiv(
             note="查询为空，没有可检索的关键词",
         )
 
-    url = (
-        f"{API_URL}?search_query=all:{quote(normalized_query, safe='')}"
-        f"&start=0&max_results={limit}"
-    )
-
+    candidates = _search_candidates(normalized_query)
     try:
-        data = _fetch(url, fetch)
+        for candidate in candidates:
+            results = _fetch_feed(candidate, limit, fetch)
+            if results:
+                return SearchResult(
+                    query=normalized_query,
+                    results=results,
+                    degraded=False,
+                    # 整句没命中、退回按词搜才有结果时，说清楚"这批不是精确匹配"
+                    note="" if candidate == candidates[0] else "按整句没有精确匹配，下面是把词拆开搜的结果",
+                )
     except Exception as exc:  # noqa: BLE001 —— 断网/超时/DNS 的异常类型不可枚举
         reason = str(exc) or type(exc).__name__
         return SearchResult(
@@ -278,18 +290,12 @@ def search_arxiv(
             note=f"arXiv 检索失败：{reason}",
         )
 
-    try:
-        results = parse_atom(data)
-    except Exception as exc:  # noqa: BLE001 —— 上游返回坏 XML 时同样不能 500
-        reason = str(exc) or type(exc).__name__
-        return SearchResult(
-            query=normalized_query,
-            results=[],
-            degraded=True,
-            note=f"arXiv 返回内容无法解析：{reason}",
-        )
-
-    return SearchResult(query=normalized_query, results=results, degraded=False)
+    return SearchResult(
+        query=normalized_query,
+        results=[],
+        degraded=False,
+        note="整句和拆成关键词都没有匹配到" if len(candidates) > 1 else "",
+    )
 
 
 def _is_complete_pdf(data: bytes) -> bool:

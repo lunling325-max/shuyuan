@@ -1,0 +1,366 @@
+"""多来源检索的测试（全程离线）。
+
+这组测试守的不是"各站今天返回了什么"，而是四件事：
+
+1. **一个站挂了不影响其余站** —— 每站各自降级，最终仍是 200；
+2. **同一篇论文不会出现两遍** —— 各站的身份标识不同，去重要认全；
+3. **能不能入库要说真话** —— 只有解得出 arXiv id 的条目才给 can_ingest；
+4. **认得出 arXiv 的各种写法** —— pdf 链接、abs 链接、10.48550/arxiv.* 的 DOI。
+
+所有请求都走注入的假 fetch，一个网络包都不发。
+"""
+
+from __future__ import annotations
+
+import json
+import time
+
+import pytest
+
+from app.tools import sources
+from app.tools.sources import Hit, _arxiv_id_from, _dedupe_keys, search_sources
+
+ARXIV_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/1706.03762v7</id>
+    <published>2023-08-02T00:00:00Z</published>
+    <title>Attention Is All You Need</title>
+    <summary>The dominant sequence transduction models are based on RNNs.</summary>
+    <author><name>Ashish Vaswani</name></author>
+    <link title="pdf" href="http://arxiv.org/pdf/1706.03762v7" rel="related" type="application/pdf"/>
+    <link href="http://arxiv.org/abs/1706.03762v7" rel="alternate" type="text/html"/>
+  </entry>
+</feed>
+"""
+
+EMPTY_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"></feed>
+"""
+
+OPENALEX_SAME_PAPER = {
+    "results": [
+        {
+            "id": "https://openalex.org/W2963403868",
+            "display_name": "Attention Is All You Need",
+            "publication_year": 2017,
+            "doi": "https://doi.org/10.48550/arxiv.1706.03762",
+            "authorships": [
+                {"author": {"display_name": "Ashish Vaswani"}},
+                {"author": {"display_name": "Noam Shazeer"}},
+            ],
+            "primary_location": {
+                "source": {"display_name": "arXiv"},
+                "landing_page_url": "https://arxiv.org/abs/1706.03762",
+            },
+            "best_oa_location": {"pdf_url": "https://arxiv.org/pdf/1706.03762"},
+        }
+    ]
+}
+
+OPENALEX_MIXED = {
+    "results": [
+        {
+            "id": "https://openalex.org/W2963403868",
+            "display_name": "Attention Is All You Need",
+            "publication_year": 2017,
+            "doi": "https://doi.org/10.48550/arxiv.1706.03762",
+            "authorships": [{"author": {"display_name": "Ashish Vaswani"}}],
+            "primary_location": {"source": {"display_name": "arXiv"}},
+            "best_oa_location": {"pdf_url": "https://arxiv.org/pdf/1706.03762"},
+        },
+        {
+            "id": "https://openalex.org/W2043403838",
+            "display_name": "Deep Residual Learning for Image Recognition",
+            "publication_year": 2016,
+            "doi": "https://doi.org/10.1109/cvpr.2016.90",
+            "authorships": [{"author": {"display_name": "Kaiming He"}}],
+            "primary_location": {
+                "source": {"display_name": "CVPR"},
+                "landing_page_url": "https://doi.org/10.1109/cvpr.2016.90",
+            },
+            "best_oa_location": {"pdf_url": "https://openaccess.thecvf.com/resnet.pdf"},
+        },
+    ]
+}
+
+CROSSREF_SAME_TITLE = {
+    "message": {
+        "items": [
+            {
+                "DOI": "10.5555/3295222.3295349",
+                "title": ["Attention is All you Need"],
+                "author": [{"given": "Ashish", "family": "Vaswani"}],
+                "issued": {"date-parts": [[2017]]},
+                "container-title": ["NeurIPS"],
+                "link": [],
+            }
+        ]
+    }
+}
+
+
+ZENODO_RECORDS = {
+    "hits": {
+        "hits": [
+            {
+                "id": 14571411,
+                "doi": "10.5281/zenodo.14571411",
+                "links": {"self_html": "https://zenodo.org/records/14571411"},
+                "metadata": {
+                    "title": "Generative AI Unveiled: Mechanisms and Biases",
+                    "creators": [
+                        {"name": "Thotapally, Saiprapul"},
+                        {"name": "Rao, Meera"},
+                    ],
+                    "publication_date": "2024-12-29",
+                    "resource_type": {"title": "Journal article"},
+                    "description": "<p>This article explores <b>biases</b> in generative models.</p>",
+                },
+                "files": [
+                    {
+                        "key": "Generative AI Unveiled.pdf",
+                        "links": {
+                            "self": "https://zenodo.org/api/records/14571411/files/paper.pdf/content"
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+}
+
+
+def _json(payload: dict) -> bytes:
+    return json.dumps(payload).encode("utf-8")
+
+
+def _dispatcher(table: dict[str, bytes]):
+    """按 URL 里的域名分派响应；表里没有的域名一律当断网。"""
+
+    def fetch(url: str) -> bytes:
+        for marker, body in table.items():
+            if marker in url:
+                return body
+        raise OSError(f"没有为 {url} 准备响应")
+
+    return fetch
+
+
+# ------------------------------------------------------------------ 身份识别
+
+
+def test_arxiv_id_is_found_in_every_common_form():
+    assert _arxiv_id_from("https://arxiv.org/pdf/1706.03762v7") == "1706.03762"
+    assert _arxiv_id_from("https://arxiv.org/abs/1706.03762") == "1706.03762"
+    assert _arxiv_id_from("https://doi.org/10.48550/arXiv.1706.03762") == "1706.03762"
+    assert _arxiv_id_from("10.1109/cvpr.2016.90") == ""
+    assert _arxiv_id_from("") == ""
+
+
+def test_dedupe_keys_cover_arxiv_doi_and_title():
+    keys = _dedupe_keys(
+        Hit(source="openalex", source_id="W2963403868",
+            title="Attention Is All You Need!", arxiv_id="1706.03762")
+    )
+    assert "arxiv:1706.03762" in keys
+    assert "title:attentionisallyouneed" in keys
+
+    doi_hit = Hit(source="crossref", source_id="10.5555/3295222.3295349",
+                  title="Attention is All you Need")
+    # 只靠 DOI 撞不上 arXiv 那条，还要靠抹平后的标题 —— 这就是它存在的理由
+    assert "doi:10.5555/3295222.3295349" in _dedupe_keys(doi_hit)
+    assert "title:attentionisallyouneed" in _dedupe_keys(doi_hit)
+    assert set(keys) & set(_dedupe_keys(doi_hit)) == {"title:attentionisallyouneed"}
+
+
+# ------------------------------------------------------------------ 汇总
+
+
+def test_same_paper_from_two_sources_appears_once():
+    fetch = _dispatcher({
+        "export.arxiv.org": ARXIV_FEED,
+        "api.openalex.org": _json(OPENALEX_SAME_PAPER),
+        "api.crossref.org": _json(CROSSREF_SAME_TITLE),
+    })
+    result = search_sources("attention is all you need", limit=10, fetch=fetch)
+
+    assert len(result.hits) == 1
+    hit = result.hits[0]
+    # 保留先出现的来源（arXiv），其余站只是给它补字段
+    assert hit.source == "arxiv"
+    assert hit.arxiv_id == "1706.03762"
+
+    reports = {r.name: r for r in result.sources}
+    assert reports["arxiv"].count == 1
+    assert reports["arxiv"].ok
+    assert reports["crossref"].ok is False or reports["crossref"].count == 1
+
+
+def test_one_source_down_does_not_take_the_others_with_it():
+    fetch = _dispatcher({
+        "export.arxiv.org": ARXIV_FEED,
+        "api.crossref.org": _json(CROSSREF_SAME_TITLE),
+        # 没有 openalex：它的请求会抛 OSError，模拟断网
+    })
+    result = search_sources("attention", limit=10, fetch=fetch)
+
+    reports = {r.name: r for r in result.sources}
+    assert reports["openalex"].ok is False
+    assert reports["openalex"].degraded is True
+    assert "没有为" in reports["openalex"].note
+    assert reports["arxiv"].ok is True
+    assert any(hit.arxiv_id == "1706.03762" for hit in result.hits)
+
+
+def test_semantic_scholar_429_is_reported_as_rate_limit():
+    def fetch(url: str) -> bytes:
+        if "semanticscholar" in url:
+            raise OSError("HTTP Error 429: Too Many Requests")
+        if "export.arxiv.org" in url:
+            return ARXIV_FEED
+        raise OSError("没有为 %s 准备响应" % url)
+
+    result = search_sources("attention", limit=5, fetch=fetch)
+    s2 = next(r for r in result.sources if r.name == "semanticscholar")
+    assert s2.ok is False
+    assert "限流" in s2.note
+
+
+def test_hits_keep_ingest_flag_honest():
+    fetch = _dispatcher({
+        "export.arxiv.org": EMPTY_FEED,
+        "api.openalex.org": _json(OPENALEX_MIXED),
+    })
+    result = search_sources("resnet", limit=10,
+                            sources=["arxiv", "openalex"], fetch=fetch)
+
+    by_title = {hit.title: hit for hit in result.hits}
+    attention = by_title["Attention Is All You Need"]
+    resnet = by_title["Deep Residual Learning for Image Recognition"]
+    assert attention.can_ingest is True and attention.arxiv_id == "1706.03762"
+    # CVPR 那篇有 PDF 但不在 arXiv 上 —— 只能给原文链接，不能承诺入库
+    assert resnet.can_ingest is False
+    assert resnet.pdf_url.endswith("resnet.pdf")
+
+
+def test_zenodo_hits_carry_pdf_and_plain_text_abstract():
+    fetch = _dispatcher({"zenodo.org": _json(ZENODO_RECORDS)})
+    result = search_sources("generative ai", limit=10, sources=["zenodo"], fetch=fetch)
+
+    assert len(result.hits) == 1
+    hit = result.hits[0]
+    assert hit.source == "zenodo"
+    assert hit.year == "2024"
+    assert hit.venue == "Journal article"
+    assert hit.authors == ["Thotapally, Saiprapul", "Rao, Meera"]
+    assert hit.pdf_url.endswith("paper.pdf/content")
+    assert hit.abs_url == "https://zenodo.org/records/14571411"
+    # description 是 HTML，卡片里要显示纯文本
+    assert "<" not in hit.abstract and "biases" in hit.abstract
+    assert hit.can_ingest is False     # Zenodo 的 PDF 进不了 arXiv 通道
+
+
+def test_slow_source_times_out_without_holding_the_whole_search(monkeypatch):
+    monkeypatch.setattr(sources, "DEADLINE_SECONDS", 0.2)
+
+    def fetch(url: str) -> bytes:
+        if "export.arxiv.org" in url:
+            return ARXIV_FEED
+        time.sleep(1.0)                 # 比总时限慢，模拟卡住的站
+        return _json(OPENALEX_MIXED)
+
+    result = search_sources("attention", limit=5,
+                            sources=["arxiv", "openalex"], fetch=fetch)
+    reports = {r.name: r for r in result.sources}
+    assert reports["arxiv"].ok is True
+    assert reports["openalex"].ok is False
+    assert "超过" in reports["openalex"].note
+    assert result.hits                   # 快的那一站的结果照发，不陪着一起等
+
+
+def test_unknown_source_names_fall_back_to_known_ones():
+    fetch = _dispatcher({"export.arxiv.org": ARXIV_FEED})
+    result = search_sources("attention", limit=5, sources=["arxiv", "acl"], fetch=fetch)
+    assert [r.name for r in result.sources] == ["arxiv"]
+    assert result.hits
+
+
+def test_empty_query_returns_nothing_without_calling_out():
+    def fetch(url: str) -> bytes:
+        raise AssertionError("空查询不该发任何请求")
+
+    result = search_sources("   ", limit=5, fetch=fetch)
+    assert result.hits == []
+    assert all(not r.ok for r in result.sources)
+
+
+# ------------------------------------------------------------------ 端点
+
+
+@pytest.fixture()
+def client():
+    from fastapi import FastAPI
+    from app.api.routers.tools import router
+
+    app = FastAPI()
+    app.include_router(router)
+    from fastapi.testclient import TestClient
+
+    return TestClient(app)
+
+
+def test_search_endpoint_returns_hits_and_per_source_reports(client, monkeypatch):
+    fetch = _dispatcher({
+        "export.arxiv.org": ARXIV_FEED,
+        "api.openalex.org": _json(OPENALEX_MIXED),
+        "api.crossref.org": _json(CROSSREF_SAME_TITLE),
+    })
+    # 路由走的是 net.fetch_bytes，替掉它就等于断网
+    monkeypatch.setattr(sources.net, "fetch_bytes",
+                        lambda url, **kwargs: fetch(url))
+
+    response = client.get("/api/tools/search", params={"q": "attention is all you need"})
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["query"] == "attention is all you need"
+    assert {r["name"] for r in body["sources"]} >= {"arxiv", "openalex", "crossref"}
+    titles = [hit["title"] for hit in body["hits"]]
+    assert titles.count("Attention Is All You Need") == 1
+
+    attention = next(h for h in body["hits"] if h["arxiv_id"] == "1706.03762")
+    assert attention["can_ingest"] is True
+
+
+def test_search_endpoint_reports_partial_failure_without_500(client, monkeypatch):
+    monkeypatch.setattr(sources.net, "fetch_bytes",
+                        lambda url, **kwargs: _json(OPENALEX_MIXED))
+
+    response = client.get("/api/tools/search", params={"q": "resnet"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["degraded"] is True          # 有的站挂了、有的站有结果
+    assert "暂不可用" in body["note"]
+    assert body["hits"]
+
+
+def test_search_endpoint_accepts_bogus_source_list(client, monkeypatch):
+    monkeypatch.setattr(sources.net, "fetch_bytes",
+                        lambda url, **kwargs: _json(OPENALEX_MIXED))
+    response = client.get("/api/tools/search", params={"q": "resnet", "sources": "acl,foo"})
+    assert response.status_code == 200
+    # 一个都不认识 → 退回查全部，而不是返回空列表
+    assert len(response.json()["sources"]) == len(sources.SOURCES)
+
+
+def test_search_endpoint_without_network_still_answers(client, monkeypatch):
+    def boom(url: str, **kwargs):
+        raise OSError("网络不可用")
+
+    monkeypatch.setattr(sources.net, "fetch_bytes", boom)
+    response = client.get("/api/tools/search", params={"q": "attention"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["hits"] == []
+    assert all(r["ok"] is False for r in body["sources"])

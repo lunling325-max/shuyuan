@@ -366,3 +366,61 @@ def test_complete_check_ignores_non_pdf_payloads():
     assert arxiv._is_complete_pdf(b"<html>rate limited</html>") is True
     assert arxiv._is_complete_pdf(_pdf_bytes()) is True
     assert arxiv._is_complete_pdf(_pdf_bytes()[:1000]) is False
+
+
+# ------------------------------------------------------------ 检索式构造
+
+
+def test_multi_word_query_is_sent_as_a_phrase(monkeypatch):
+    """arXiv 的 all: 只绑定一个词，整句必须加引号，否则那篇经典根本排不进来。"""
+    calls: list[str] = []
+    monkeypatch.setattr(arxiv, "default_fetch", _fake_fetch(ATOM_FEED, calls))
+
+    arxiv.search_arxiv("attention is all you need", limit=5)
+
+    assert len(calls) == 1, "整句命中了就不用再按词搜"
+    assert "search_query=all%3A%22attention%20is%20all%20you%20need%22" in calls[0]
+
+
+def test_phrase_miss_falls_back_to_loose_words(monkeypatch):
+    """"我只有一个主题、没有标题"时，整句搜不到要退回去按词搜。"""
+    calls: list[str] = []
+    feeds = [EMPTY_FEED, ATOM_FEED]
+
+    def fetch(url: str) -> bytes:
+        calls.append(url)
+        return feeds[len(calls) - 1]
+
+    monkeypatch.setattr(arxiv, "default_fetch", fetch)
+
+    result = arxiv.search_arxiv("sparse attention long document retrieval")
+
+    assert len(calls) == 2
+    assert "%22" in calls[0] and "%22" not in calls[1], "第一次整句带引号，第二次按词搜"
+    assert result.results, "退回去的那次有结果就要用"
+    assert "精确匹配" in result.note, "要说清这批不是精确匹配"
+
+
+def test_search_retries_once_after_handshake_timeout(monkeypatch):
+    """握手卡死是实测过的常态，隔一下再发就能通，别让用户看到"不可达"。"""
+    calls: list[str] = []
+
+    def flaky(url: str) -> bytes:
+        calls.append(url)
+        if len(calls) == 1:
+            raise TimeoutError("The handshake operation timed out")
+        return ATOM_FEED
+
+    monkeypatch.setattr(arxiv, "default_fetch", flaky)
+    monkeypatch.setattr(arxiv.time, "sleep", lambda _s: None)
+
+    result = arxiv.search_arxiv("attention", limit=5)
+
+    assert result.degraded is False
+    assert len(calls) == 2
+    assert result.results
+
+
+def test_quotes_in_user_query_do_not_break_the_syntax():
+    candidates = arxiv._search_candidates('a "quoted" (weird) query')
+    assert candidates[0] == 'all:"a quoted (weird) query"'
