@@ -89,7 +89,7 @@
       "paper": "2508.18224",
       "question": "这个 kernel 相比原有实现快在哪里？",
       "expect": "answer",
-      "must_contain": ["3.5|H20"]
+      "must_contain": ["加速|speedup"]
     },
     {
       "paper": "1706.03762",

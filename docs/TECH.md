@@ -364,7 +364,7 @@ LangGraph 这类框架提供的核心价值是状态机与时序控制。本系�
 | 运行时依赖 | 8 个 |
 | 启动 | `./scripts/dev.sh`（Windows 用 `.\scripts\dev.ps1`），唯一前置是 `uv` |
 | 部署 | `./scripts/deploy_remote.sh`，一条命令打包→上传→装 Docker→加 swap→构建→探活 |
-| 实测内存 | 冷启动 13 MB；导入应用后 251 MB；3 篇文献索引完成后 **385 MB**（2C4G 机器） |
+| 实测内存 | 冷启动 13 MB；导入应用后 251 MB；3 篇索引完成后 385 MB；**13 篇（260 页 / 531 块）569 MB** —— 约 12 MB／篇（2C4G 机器，E-026） |
 | 首次构建 | 改用阿里云 Debian 源后 6 分钟（原 13 分钟里 12 分钟耗在 `deb.debian.org` 拉 10 MB 的 `libgomp1`，实测 13.8 kB/s；换源后同一文件 3.0 MB/s） |
 
 ### 8.2 降级策略
@@ -413,6 +413,8 @@ Docker 两阶段构建，容器内以 `appuser`（uid 10001）非 root 运行，
 | 工程 | 测试 | 439 项全通过 |
 | 部署 | 端到端 | 公网问答实测：答"h = 8"，回溯第 5 页，`exact: true`、`similarity: 1.0` |
 | **端到端（24 题人工标注）** | **引用准确率 / 拒答正确率** | **53/53 = 100% / 9/9 = 100%**（E-025） |
+| 规模（7 → 13 篇） | 同一套题单的稳定性 | 引用 53/53、拒答 9/9 不变，中位 1851 → 2005 ms（E-026） |
+| 规模（11 个视图） | 全部可用 / 最慢 | 11/11 返回 200；最慢为综述 13.5 s，中位 1.2–1.4 s |
 | **核验器反向对照** | 故意改坏的引用被拦下 | **12/12** |
 | **端到端耗时** | 单题中位数 / 最长 | 1851 ms / 5157 ms（2C4G 阿里云） |
 
@@ -490,6 +492,6 @@ apps/api/app/
   agent/        planner.py（两阶段规划）、registry.py（10 个工具）
   analysis/     chart.py（手写 SVG 出图）
 apps/web/       index.html（单文件前端）、logo.svg、logo-lockup.svg
-docs/           EXPERIMENTS.md（25 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
+docs/           EXPERIMENTS.md（26 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
 scripts/        eval_qa.py + eval_questions.json（端到端评测：引用准确率 / 拒答正确率）
 ```

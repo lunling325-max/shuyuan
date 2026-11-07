@@ -209,12 +209,15 @@ uv run --directory apps/api python ../../scripts/eval_qa.py \
 | 核验器反向对照 | **12 / 12** 条改坏的引用被拦下 |
 | 单题耗时 中位数 / 最长 | 1851 ms / 5157 ms |
 
+库从 7 篇灌到 13 篇（260 页 / 531 块）后复测：三项指标一条没掉，中位耗时
+1851 → 2005 ms；十一个视图全部可用，最慢的是综述 13.5 s（E-026）。
+
 ## 文档索引
 
 | 文件 | 内容 |
 |---|---|
 | [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 11 张实机截图（PDF 17 页，`build/TECH.pdf`） |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 25 篇实验记录（E-001–E-025），每条结论带实测数字 |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 26 篇实验记录（E-001–E-026），每条结论带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑与对策） |
 | [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：时间轴、逐段口播、翻车预案；录屏成品 `build/shuyuan-demo.mp4`（6 分 26 秒） |

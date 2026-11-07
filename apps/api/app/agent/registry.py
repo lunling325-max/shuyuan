@@ -361,7 +361,7 @@ def _search_library(ctx: ToolContext, args: SearchLibraryArgs) -> ToolOutcome:
             f"score={item['score']} · {item['quote'][:120]}"
         )
     if not results:
-        lines.append("没有命中。可以换英文关键词或换用 list_papers 看看库里的标题。")
+        lines.append("没有命中。可更换英文关键词，或通过 list_papers 查看库内标题。")
     return ToolOutcome(
         ok=True,
         summary="\n".join(lines),
@@ -738,7 +738,7 @@ def build_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="get_paper",
-            description="查看一篇论文的元信息：标题、年份、页数、块数，以及库里是否有它的其他版本。",
+            description="查看一篇论文的元信息：标题、年份、页数、块数，以及库内是否存在该论文的其他版本。",
             args_model=GetPaperArgs,
             handler=_get_paper,
         )
@@ -786,7 +786,7 @@ def build_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="list_papers",
-            description="列出资料库里的全部论文及其 id、年份、页数与块数；用于先确认库里有什么。",
+            description="列出库内全部论文及其 id、年份、页数与块数；用于先确认库内现有文献。",
             args_model=ListPapersArgs,
             handler=_list_papers,
         )

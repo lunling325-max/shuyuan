@@ -708,7 +708,7 @@ svg{width:100%;height:auto;display:block}
     </aside>
 
     <div class="card page-wrap">
-      <!-- 阅读器里换文献：没有这个下拉，读者只能在文献库里点，
+      <!-- 阅读器里换文献：没有这个下拉，读者只能在文献库内点，
            一旦进来就只能读到自动载入的第一篇 -->
       <div class="paper-bar">
         <label class="pick">当前文献 <select id="paper-pick" aria-label="切换文献"></select></label>
@@ -1367,7 +1367,7 @@ svg{width:100%;height:auto;display:block}
 
     state.papers.forEach((p) => {
       // 标题下必须带日期：同一篇的 v1 和 v7 标题一模一样，
-      // 只列标题的话库里两行看着完全相同，等于没告诉用户哪个是新的
+      // 只列标题的话库内两行看着完全相同，等于没告诉用户哪个是新的
       const meta = [p.filename, paperDateLong(p)].filter(Boolean).join(' · ');
       // 点一行 = 打开这篇**并**切到阅读器。只 openPaper 不切视图的话，
       // 数据换了页却没换，看着像"点了没反应"。
@@ -1409,7 +1409,7 @@ svg{width:100%;height:auto;display:block}
   const normTitle = (t) => (t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
   /** 默认挑**同一篇**的两个版本。
-      早先直接拿全局最早 + 全局最晚：库里有 541 页教材时，默认对就是
+      早先直接拿全局最早 + 全局最晚：库内有 541 页教材时，默认对就是
       「Transformer v1 → 教材」，逐句对齐跑不完，点了对比像没反应。
 
       分组键优先用 arXiv 号：标题是"认"出来的，扫描件靠 OCR、正常版靠版面，
@@ -1537,7 +1537,7 @@ svg{width:100%;height:auto;display:block}
     return el('p', { class: 'hint' }, '两份的版本号与 PDF 生成日期均不完整，无法判断新旧，请自行确认。');
   }
 
-  /** 上传后若撞上库里的版本，给出可操作的提示 —— 这正是官方用例 3.1。 */
+  /** 上传后若撞上库内的版本，给出可操作的提示 —— 这正是官方用例 3.1。 */
   function renderDupAlert(body, file) {
     const box = $('dup-alert');
     if (!box) return;
@@ -1549,24 +1549,24 @@ svg{width:100%;height:auto;display:block}
     const other = state.papers.find((p) => p.id === body.duplicate_of) || {};
     const pct = ((body.similarity || 0) * 100).toFixed(1);
     // 标题按关系分三种写法。以前是一句话套两个分支，拼出来是
-    // "库里已有是同一篇的不同版本" —— 读起来像机器翻译。
+    // "库内已有是同一篇的不同版本" —— 读起来像机器翻译。
     const TITLE = {
-      identical: '库里已有内容完全相同的文件',
-      new_version: '库里已有同一篇的另一个版本',
-      related: '库里已有内容高度相关的另一篇',
+      identical: '库内已有内容完全相同的文件',
+      new_version: '库内已有同一篇的另一个版本',
+      related: '库内已有内容高度相关的另一篇',
     };
     // 覆盖按钮的文案跟着"谁更新"变。判断不出来时不许摆出"推荐覆盖"的姿态。
     const replaceLabel = body.recommendation === 'keep_existing'
-      ? '仍要覆盖库里的版本'
+      ? '仍要覆盖库内的版本'
       : '覆盖：用这份替换';
 
     box.replaceChildren(
       el('div', { class: 'ic', 'aria-hidden': 'true' }, '⧉'),
       el('div', {},
-        el('h3', {}, TITLE[body.relation] || '库里已有相似的另一篇'),
+        el('h3', {}, TITLE[body.relation] || '库内已有相似的另一篇'),
         el('p', {}, `正文指纹相似度 ${pct}% —— 判定依据为正文内容，而非文件名。`),
         el('div', { class: 'cmp' },
-          el('span', {}, '库里已有 ', el('b', {}, other.title || body.duplicate_title || ''),
+          el('span', {}, '库内已有 ', el('b', {}, other.title || body.duplicate_title || ''),
             ` · ${paperMeta(other)}`),
           el('span', {}, '本次上传 ', el('b', {}, body.title), ` · ${paperMeta(body)}`),
         ),
@@ -1797,7 +1797,7 @@ svg{width:100%;height:auto;display:block}
       showNote('');
       renderDupAlert(null);   // 刷新后旧的上传提示就过期了
       if (state.papers.length && !state.paper) {
-        // ?paper=<id> 指定这次演示用哪一篇；没指定就用库里最新上传的那篇
+        // ?paper=<id> 指定这次演示用哪一篇；没指定就用库内最新上传的那篇
         const want = new URLSearchParams(location.search).get('paper');
         const target = state.papers.find((p) => p.id === want) || state.papers[0];
         await openPaper(target.id);
@@ -1817,7 +1817,7 @@ svg{width:100%;height:auto;display:block}
 
   /**
    * 上传一篇。`onDuplicate` 是遇到同篇旧版本时的策略：
-   * warn（默认，两版都留）/ replace（删掉库里那版）/ keep（不入库，只回 409）。
+   * warn（默认，两版都留）/ replace（删掉库内那版）/ keep（不入库，只回 409）。
    *
    * 默认永远是非破坏性的：自动覆盖一旦判错，删掉的是用户手里唯一的那份原件。
    */
@@ -1842,7 +1842,7 @@ svg{width:100%;height:auto;display:block}
       GRAPH.data = null;       // 库变了，旧图作废
       openInReader(paper.id);
     } catch (err) {
-      // 409 = 库里已有同一篇的版本，而且用户选的是"保留"。这不是失败，
+      // 409 = 库内已有同一篇的版本，而且用户选的是"保留"。这不是失败，
       // 所以把冲突详情交给提示卡去画"覆盖"按钮，而不是弹一句红字了事。
       if (err.status === 409 && err.detail) {
         showNote('');
@@ -1901,7 +1901,7 @@ svg{width:100%;height:auto;display:block}
           el('span', { class: 'name', title: it.filename }, it.filename),
           el('span', { class: 'st' }, label),
           it.ok && p
-            ? el('span', { class: 'why' }, `${p.pages} 页 · ${p.chunks} 块${p.duplicate_of ? ' · 库里已有另一版本' : ''}`)
+            ? el('span', { class: 'why' }, `${p.pages} 页 · ${p.chunks} 块${p.duplicate_of ? ' · 库内已有另一版本' : ''}`)
             : el('span', { class: 'why', title: it.error || '' }, it.error || ''),
         );
       }),
@@ -1918,10 +1918,10 @@ svg{width:100%;height:auto;display:block}
     box.replaceChildren(
       el('div', { class: 'ic', 'aria-hidden': 'true' }, '⧉'),
       el('div', {},
-        el('h3', {}, '库里已有同一篇的另一个版本'),
+        el('h3', {}, '库内已有同一篇的另一个版本'),
         el('p', {}, `按「保留」策略，本次未入库。是否覆盖库内版本？此操作将删除库内文件，且不可撤销。`),
         el('div', { class: 'cmp' },
-          el('span', {}, '库里已有 ', el('b', {}, existing.title || ''), ` · ${paperMeta(existing)}`),
+          el('span', {}, '库内已有 ', el('b', {}, existing.title || ''), ` · ${paperMeta(existing)}`),
           el('span', {}, '本次上传 ', el('b', {}, uploaded.title || ''), ` · ${paperMeta(uploaded)}`),
         ),
         el('div', { class: 'acts' },
@@ -3106,7 +3106,7 @@ svg{width:100%;height:auto;display:block}
       }
       const merged = papers.filter((p) => p.versions > 1);
       if (merged.length) {
-        lines.push(`《${shortLabel(merged[0].label, 20)}》在库里有 ${merged[0].versions} 个版本，图上算作一个节点 —— 别人引用的是这篇论文，不是某一版。`);
+        lines.push(`《${shortLabel(merged[0].label, 20)}》在库内有 ${merged[0].versions} 个版本，图上算作一个节点 —— 别人引用的是这篇论文，不是某一版。`);
       }
     }
     lines.forEach((t) => box.append(el('p', { style: 'margin:0 0 8px' }, t)));
@@ -3268,7 +3268,7 @@ svg{width:100%;height:auto;display:block}
       refsBox.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
         data.outline.length
           ? '本次要点均未关联原文（模型未返回证据编号）。这些论点尚不成熟，不宜直接写入论文。'
-          : '库里没有检索到能引用的原文。'));
+          : '库内未检索到可引用的原文。'));
       return;
     }
     refsBox.replaceChildren(...data.references.map((r) => el('div', {
@@ -3788,13 +3788,13 @@ svg{width:100%;height:auto;display:block}
       GRAPH.data = null;
       renderLibrary();
       renderVersionPicker();
-      // 后端先查库再下载：这篇已经在库里时一个字节都不会下，得说清楚
+      // 后端先查库再下载：这篇已经在库内时一个字节都不会下，得说清楚
       if (data.already_present) {
-        ingestNote(`库里已经有《${data.paper.title}》（arXiv:${hit.arxiv_id}），本次未重复下载`);
+        ingestNote(`库内已经有《${data.paper.title}》（arXiv:${hit.arxiv_id}），本次未重复下载`);
         return;
       }
       const dup = data.duplicate_of
-        ? `；库里已有同一篇的另一版本（${data.duplicate_of}），可在版本谱系里比`
+        ? `；库内已有同一篇的另一版本（${data.duplicate_of}），可在版本谱系里比`
         : '';
       ingestNote(`已入库《${data.paper.title}》：${data.paper.pages} 页 · ${data.paper.chunks} 块${dup}`);
     } catch (err) {
@@ -3837,7 +3837,7 @@ svg{width:100%;height:auto;display:block}
 
   function renderRecommend(data) {
     const parts = [`${data.items.length} 篇`, `时间窗 ${data.days} 天`];
-    parts.push(data.library_size ? `比对库里 ${data.library_size} 篇` : '文献库为空，暂按时间与开源情况排');
+    parts.push(data.library_size ? `比对库内 ${data.library_size} 篇` : '文献库为空，暂按时间与开源情况排');
     // 这次刷新失败但手里有旧批次时不能说"缓存"：用户要的是"这批是旧的"
     if (data.degraded) parts.push('本次未获取到新论文');
     else if (data.cached) parts.push('缓存（15 分钟内不重复出网）');
@@ -3970,7 +3970,7 @@ svg{width:100%;height:auto;display:block}
     if (!data) return;
 
     const out = $('rv-out');
-    // 同一篇的两个版本在库里各占一条，直接列标题就成了
+    // 同一篇的两个版本在库内各占一条，直接列标题就成了
     // 「《Attention Is All You Need》、《Attention Is All You Need》」——
     // 看着像列表重复了。按标题归并，多版本在后面说一句。
     const groups = new Map();
