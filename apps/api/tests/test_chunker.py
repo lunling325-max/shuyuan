@@ -286,6 +286,44 @@ def test_a_section_number_glued_to_its_title_is_still_a_heading(tmp_path):
     assert [c.section for c in chunks] == ["7 Conclusion"], [c.section for c in chunks]
 
 
+def test_a_figure_label_is_not_a_section_heading(tmp_path):
+    """图表里的碎字不能进章节树。
+
+    真实事故（FSA，arXiv:2508.18224）：目录里冒出三条假标题 ——
+    `64 Seqlen (K)`（图里的坐标轴刻度）、`2.78 H100 NVL`（表格单元格）、
+    `Q3 Q6`（图注里的问答编号）。它们的字号只有 3.2~5.5pt，而正文与真标题
+    都是 10pt：**"编号 + 空格 + 内容"那条判据从不看字号**，图表里的字于是
+    全被抓成了章节标题，连 4.4 节都被挂到了假标题底下。
+    """
+    import pymupdf
+
+    path = tmp_path / "figures.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 80), "1 INTRODUCTION", fontsize=10.0)
+    page.insert_text(
+        (72, 100),
+        "This paper accelerates a sparse attention kernel used for long context.",
+        fontsize=10.0,
+    )
+    page.insert_text((72, 140), "2 ATTENTION KERNEL", fontsize=10.0)
+    page.insert_text((72, 160), "64 Seqlen (K)", fontsize=5.5)      # 坐标轴刻度
+    page.insert_text((72, 176), "2.78 H100 NVL", fontsize=4.6)      # 表格单元格
+    page.insert_text((72, 192), "Q3 Q6", fontsize=3.2)              # 图注编号
+    page.insert_text((72, 220), "2.1 PERFORMANCE BREAKDOWN", fontsize=10.0)
+    page.insert_text((72, 240), "Body text after the real heading, also ten point.", fontsize=10.0)
+    doc.save(str(path))
+    doc.close()
+
+    sections = {c.section for c in chunk_pdf(str(path))}
+    for fake in ("64 Seqlen", "2.78 H100 NVL", "Q3 Q6"):
+        assert not any(fake in s for s in sections), (fake, sorted(sections))
+    # 真标题还得认得出来，层级还得干净：2.1 挂在 2 底下，而不是挂在某个假标题底下
+    assert any(
+        s == "2 ATTENTION KERNEL › 2.1 PERFORMANCE BREAKDOWN" for s in sections
+    ), sorted(sections)
+
+
 def test_a_title_merged_into_its_paragraph_is_not_a_heading(tmp_path):
     """标题和下一段正文并成一块时，整块不能当标题。
 

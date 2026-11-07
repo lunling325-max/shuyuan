@@ -52,6 +52,10 @@ _LEADER_RUN = re.compile(r"(?:\.\s){4,}|\.{5,}")
 # 宁可少认一页，也不要让 OCR 去覆盖一页本来就有文字的页（OCR 会丢公式和字号）。
 _OCR_MIN_CHARS = 10
 _LETTER = re.compile(r"[A-Za-z]")
+# 比正文小到这个比例的段落直接不当标题：图表里的字（表头单元格、坐标轴刻度、
+# 图注编号）实测只有正文的三到五成高，而真标题从不小于正文。取 0.9 是为了给
+# 那些把标题排成小号小型大写字母（如 `\textsc{}`）的模板留出余量。
+MIN_HEADING_SIZE_RATIO = 0.9
 # 页码粘在标题两头：`2 1 Introduction`（页眉）、`1.1 Supervised learning 3`（页脚编号）
 _PAGE_PREFIX = re.compile(r"^\d{1,3}\s+(?=\d+(?:\.\d+)*\.?\s+\S)")
 _TRAILING_PAGE = re.compile(r"\s+\d{1,3}$")
@@ -320,6 +324,21 @@ def _heading(para: Para, body_size: float) -> tuple[int, str] | None:
     text = para.text.strip()
     n_tok = len(split_tokens(text))
     if n_tok == 0 or n_tok > 25:
+        return None
+
+    # 图表里的字比正文小得多，而"编号 + 空格 + 内容"那条判据不看字号，
+    # 于是表头单元格和坐标轴刻度全被当成了章节标题。实测 FSA 论文（2508.18224）
+    # 目录里冒出三条假标题，字号一看就分得开：
+    #
+    # | 误判的标题 | 字号 | 真实标题 / 正文 |
+    # |---|---|---|
+    # | `64 Seqlen (K)`（图 9 的坐标轴刻度） | 5.5 pt | 10.0 pt |
+    # | `2.78 H100 NVL`（表 3 的单元格） | 4.6 pt | 10.0 pt |
+    # | `Q3 Q6`（图注里的问答编号） | 3.2 pt | 10.0 pt |
+    #
+    # 所以判据放在所有分支之前：比正文小一截的段落，不可能是标题。
+    # 扫描件跳过 —— 它的 `size` 是 OCR 的墨迹高度，跟字号不是一回事。
+    if not para.size_proxy and body_size and para.size < body_size * MIN_HEADING_SIZE_RATIO:
         return None
 
     bare = text.rstrip(".:;")
