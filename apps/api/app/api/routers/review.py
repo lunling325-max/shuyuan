@@ -54,6 +54,8 @@ class ReviewReferenceOut(BaseModel):
     title: str
     page: int
     quote: str = Field(description="从证据块正文里逐字截取，压成单行，最多 200 字")
+    version: int = Field(0, description="arXiv 的 vN；0 表示取不到版本号")
+    scanned: bool = Field(False, description="这一版是扫描件，正文来自 OCR")
 
 
 class ReviewFutureOut(BaseModel):
@@ -109,6 +111,8 @@ def review(req: ReviewRequest) -> ReviewOut:
                 title=e.title,
                 page=e.page,
                 quote=e.quote,
+                version=e.version,
+                scanned=e.scanned,
             )
             for e in result.references
         ],

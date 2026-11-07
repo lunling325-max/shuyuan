@@ -189,3 +189,122 @@ def test_empty_library_returns_400(client, monkeypatch, tmp_path):
 
     assert r.status_code == 400
     assert "上传" in r.json()["detail"]
+
+
+def test_versions_of_one_work_do_not_take_two_slots():
+    """库里同一篇存了三个版本，证据里也只该出现一次。
+
+    不归并的话，"能引用的原文"会被同一篇占满：框架看起来有十条依据，
+    其实全出自同一篇论文 —— 写作 Copilot 的价值就是"多篇互证"。
+    """
+    from types import SimpleNamespace
+
+    from app.rag.copilot import collect_evidence
+
+    def paper(i: int, ver: int, scanned: bool):
+        chunk = SimpleNamespace(
+            index=0, text="attention based method", section="3 Method", page_start=1
+        )
+        hits = [SimpleNamespace(score=1.0, chunk=chunk)]
+        return SimpleNamespace(
+            id=f"p{i:02d}",
+            title="Attention Is All You Need",
+            arxiv_version=ver,
+            scanned=scanned,
+            created_at="",
+            uploaded_at="2024-01-01T00:00:00+00:00",
+            chunks=[chunk],
+            bm25=SimpleNamespace(search=lambda q, k=2: hits),
+        )
+
+    evidence = collect_evidence(
+        [paper(1, 1, True), paper(2, 1, False), paper(3, 7, False)],
+        "attention models",
+        limit=12,
+        per_paper=4,
+        llm_call=_fake_llm(["attention"], []),
+    )
+
+    assert [e.paper_id for e in evidence] == ["p03"]
+
+
+def test_reference_list_chunks_are_never_evidence():
+    """引文列表不能当"可引用原文"。
+
+    实测踩到过：FSA 第 12 页的一块被当成了证据，引文写着
+    "Vaswani et al., Attention is all you need" —— 那段话是 FSA 在引用
+    别人的工作，不是 FSA 自己的结论。拿它当依据，等于把转引当成本文。
+    """
+    from types import SimpleNamespace
+
+    from app.rag.copilot import collect_evidence
+
+    body = SimpleNamespace(
+        index=0,
+        text="Sparse attention cuts the cost of long context training.",
+        section="3 Method",
+        page_start=4,
+    )
+    refs = SimpleNamespace(
+        index=1,
+        text="[12] Ashish Vaswani et al. Attention is all you need. NeurIPS, 2017.",
+        section="References",
+        page_start=12,
+    )
+    paper = SimpleNamespace(
+        id="p01",
+        title="FSA: Fused Sparse Attention",
+        arxiv_version=3,
+        scanned=False,
+        created_at="",
+        uploaded_at="2024-01-01T00:00:00+00:00",
+        chunks=[refs, body],
+        bm25=SimpleNamespace(
+            search=lambda q, k=2: [
+                SimpleNamespace(score=9.0, chunk=refs),
+                SimpleNamespace(score=1.0, chunk=body),
+            ]
+        ),
+    )
+
+    evidence = collect_evidence(
+        [paper], "sparse attention", limit=8, per_paper=4,
+        llm_call=_fake_llm(["sparse attention"], []),
+    )
+
+    assert [e.page for e in evidence] == [4]
+
+
+def test_cited_references_are_renumbered_without_gaps():
+    """只被引用到的证据才列出来，编号必须重排成 1..K。
+
+    实测出现的跳号：[1] [2] [3] [5] [6] —— 第 4 块检索到了、但模型没引用，
+    列表里就凭空少一个号，读者会以为"第 4 条被系统丢了"。
+    """
+    from types import SimpleNamespace
+
+    from app.rag.copilot import build_outline
+
+    def paper(i: int):
+        chunk = SimpleNamespace(
+            index=0, text=f"body {i} about sparse attention", section="3 Method", page_start=i
+        )
+        hits = [SimpleNamespace(score=10.0 - i, chunk=chunk)]
+        return SimpleNamespace(
+            id=f"p{i:02d}", title=f"Paper {i}", arxiv_version=1, scanned=False,
+            created_at="", uploaded_at="2024-01-01T00:00:00+00:00", chunks=[chunk],
+            bm25=SimpleNamespace(search=lambda q, k=2: hits),
+        )
+
+    outline = [
+        {"title": "1 引言", "points": [{"text": "要点甲", "evidence": [1, 3]}]},
+        {"title": "2 方法", "points": [{"text": "要点乙", "evidence": [3]}]},
+    ]
+    result = build_outline(
+        "sparse attention", [paper(1), paper(2), paper(3)],
+        llm_call=_fake_llm(["sparse attention"], outline),
+    )
+
+    assert [ref.n for ref in result.references] == [1, 2]
+    assert [p.evidence for s in result.outline for p in s.points] == [[1, 2], [2]]
+    assert {ref.paper_id for ref in result.references} == {"p01", "p03"}

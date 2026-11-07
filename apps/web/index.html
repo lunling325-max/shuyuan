@@ -3,7 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>科研助手 Agent · 界面原型</title>
+<title>溯源 · 科研助手</title>
+<!-- 图标是内联 SVG：不占额外请求、不用管静态文件路径，颜色取主题色 --s1。
+     「溯」编码成 %E6%BA%AF，避免不同浏览器对 data URI 里非 ASCII 的处理差异。 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Ccircle cx='13.8' cy='13.8' r='6.1' fill='none' stroke='%23fff' stroke-width='2.6'/%3E%3Cpath d='M18.5 18.5L23 23' stroke='%23fff' stroke-width='2.9' stroke-linecap='round'/%3E%3Cpath d='M10.9 12.6H16.7' stroke='%23fff' stroke-width='1.7' stroke-linecap='round' opacity='.9'/%3E%3Cpath d='M10.9 15.6H14.7' stroke='%23fff' stroke-width='1.7' stroke-linecap='round' opacity='.55'/%3E%3C/svg%3E">
 <style>
 /* ============ 设计令牌 ============
    配色取自经校验的分类色板：3 槽位（蓝/橙/青）在明暗两种模式下
@@ -104,7 +107,10 @@ button{font:inherit;color:inherit;cursor:pointer}
 }
 .brand{display:flex;align-items:center;gap:9px;font-weight:650;letter-spacing:-.01em;white-space:nowrap;flex:none}
 .brand .dot{width:22px;height:22px;border-radius:7px;background:var(--s1);
-  display:grid;place-items:center;color:#fff;font-size:var(--fs-xs);font-weight:700}
+  display:grid;place-items:center;color:var(--s1);font-size:var(--fs-xs);font-weight:700}
+/* 图标是内联 SVG：底色取 currentColor（跟主题走），镜片与笔画固定白色。
+   22px 下只保留三个形状——镜圈、镜柄、被框住的那一行，再多就糊成一团。 */
+.brand .dot svg{width:22px;height:22px;display:block}
 /* 横向放不下就滚：宁可滑一下，也不让 tab 压到右边的主题按钮 */
 nav{display:flex;gap:2px;margin-left:6px;overflow-x:auto;scrollbar-width:none}
 nav::-webkit-scrollbar{display:none}
@@ -271,6 +277,8 @@ mark{
 .ai .head{
   padding:13px 15px;border-bottom:1px solid var(--hair);display:flex;
   align-items:center;gap:var(--sp-2);font-weight:600;font-size:var(--fs-sm);
+  /* 三个标签 + 状态 chip 在 328px 的窄栏里正好卡在边界上，允许折行而不是挤成一团 */
+  flex-wrap:wrap;row-gap:6px;
 }
 .ai .body{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
 .ai .body[hidden]{display:none}
@@ -294,6 +302,18 @@ mark{
 .refrow.flash{border-color:var(--warn);box-shadow:0 0 0 2px var(--wash)}
 .refrow .k{font-weight:700;color:var(--s1);margin-right:5px}
 .refrow .raw{color:var(--ink-3);font-size:var(--fs-xs)}
+/* 图表栏：表格是行×列还原出来的真 <table>，右边留滚动条而不是压扁列宽 */
+.dwrap{overflow:auto;border:1px solid var(--hair);border-radius:9px;background:var(--surface-2)}
+.dtable{border-collapse:collapse;font-size:var(--fs-xs);width:100%}
+/* 格内保留换行：booktabs 表的整个表体会被认成一格，靠分行让数字还各归各位 */
+.dtable th,.dtable td{padding:5px 8px;border-bottom:1px solid var(--hair);text-align:left;white-space:pre-line}
+.dtable th{font-weight:700;color:var(--ink-2);background:var(--wash)}
+.dtable tr:last-child td{border-bottom:0}
+.figcard{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:9px;
+  border:1px solid var(--hair);background:var(--surface-2)}
+.figcard .vcap{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-sm);font-weight:600}
+.figcard .pg{margin-left:auto;font-weight:400;font-size:var(--fs-xs);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.thumb{display:block;width:100%;border:1px solid var(--hair);border-radius:7px;background:#fff}
 .q{align-self:flex-end;background:var(--wash);border-radius:11px 11px 3px 11px;
   padding:9px var(--sp-3);font-size:var(--fs-sm);max-width:88%}
 .a{font-size:var(--fs-sm);line-height:1.6}
@@ -619,7 +639,7 @@ svg{width:100%;height:auto;display:block}
 <body>
 
 <header class="appbar">
-  <div class="brand"><span class="dot" aria-hidden="true">科</span><span class="name">科研助手 Agent</span></div>
+  <div class="brand"><span class="dot" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false" aria-hidden="true"><circle cx="13.8" cy="13.8" r="6.1" fill="none" stroke="#fff" stroke-width="2.6"/><path d="M18.5 18.5L23 23" stroke="#fff" stroke-width="2.9" stroke-linecap="round"/><path d="M10.9 12.6H16.7" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity=".9"/><path d="M10.9 15.6H14.7" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity=".55"/></svg></span><span class="name">溯源 · 科研助手</span></div>
   <nav id="nav" role="tablist" aria-label="功能视图">
     <button data-v="library" role="tab" aria-controls="view-library" aria-selected="true">文献库</button>
     <button data-v="reader" role="tab" aria-controls="view-reader" aria-selected="false">阅读器</button>
@@ -670,7 +690,7 @@ svg{width:100%;height:auto;display:block}
         <tr id="empty-row" hidden>
           <td colspan="5" style="text-align:center;padding:38px var(--sp-3)">
             <div style="font-size:var(--fs-sm);color:var(--ink-1);font-weight:560;margin-bottom:var(--sp-1)">没有匹配的文献</div>
-            <div style="font-size:var(--fs-xs);color:var(--ink-3);margin-bottom:var(--sp-3)">换个关键词，或直接上传一篇新的 PDF</div>
+            <div style="font-size:var(--fs-xs);color:var(--ink-3);margin-bottom:var(--sp-3)">可更换关键词，或上传新的 PDF 文献</div>
             <button class="btn primary" id="empty-upload">＋ 上传 PDF</button>
           </td>
         </tr>
@@ -698,28 +718,35 @@ svg{width:100%;height:auto;display:block}
         <span class="pgmark" id="page-mark">—</span>
         <h4 id="page-title">请先在文献库选择一篇论文</h4>
         <div class="cols" id="page-text">
-          <p class="note">从左侧目录选择一个块开始阅读。</p>
+          <p class="note">请从左侧目录选择一段开始阅读。</p>
         </div>
       </div>
     </div>
 
     <aside class="card ai">
-      <!-- 右栏一分为二：问答与参考文献。参考文献单独列表，正文里的 [11]
-           才有个"跳过去"的落点 —— 这一栏就是双向跳转的另一半 -->
+      <!-- 右栏一分为三：问答、参考文献、图表。参考文献单独列表，正文里的 [11]
+           才有个"跳过去"的落点 —— 这一栏就是双向跳转的另一半。
+           图表单独一栏是因为它慢（逐页找网格线），不能拖累正文和问答。 -->
       <div class="head" role="tablist" aria-label="右栏内容">
         <button class="tab" id="tab-qa" data-tab="qa" role="tab" aria-selected="true">论文问答</button>
         <button class="tab" id="tab-refs" data-tab="refs" role="tab" aria-selected="false">
           参考文献 <span class="chip" id="ref-count">—</span>
         </button>
+        <button class="tab" id="tab-visual" data-tab="visual" role="tab" aria-selected="false">
+          图表 <span class="chip" id="visual-count">—</span>
+        </button>
         <span class="spacer"></span>
         <span class="chip" id="qa-chip">未提问</span>
       </div>
       <div class="body" id="qa-body">
-        <p class="note" style="margin:0">问任何细节。每条结论都会核对到原文的页码与坐标框，
-        核对不上的直接不展示。</p>
+        <p class="note" style="margin:0">可就任意细节提问。每条结论均核验至原文页码与坐标框，
+        无法核验者不予展示。</p>
       </div>
       <div class="body" id="ref-body" hidden>
         <p class="note" style="margin:0">载入中…</p>
+      </div>
+      <div class="body" id="visual-body" hidden>
+        <p class="note" style="margin:0">切换至本栏后开始解析。</p>
       </div>
       <div class="foot" id="qa-foot">
         <div class="composer">
@@ -745,7 +772,7 @@ svg{width:100%;height:auto;display:block}
     <div class="card vdiff" id="ver-panel">
       <div class="vbody">
         <p class="note" style="margin:0">
-          选两版，点「对比差异」。哪版新按 PDF 元数据里的生成日期判，不按文件名、不按上传顺序。
+          选择两个版本后点击「对比差异」。新旧依据 PDF 元数据中的生成日期判断，不以文件名或上传顺序为准。
         </p>
       </div>
     </div>
@@ -768,11 +795,11 @@ svg{width:100%;height:auto;display:block}
     <div class="split">
       <div class="card pane en">
         <h5>ENGLISH · 原文</h5>
-        <div id="cmp-en"><p class="note">选一篇文献，原文会立刻显示；译文按段落逐条对齐。</p></div>
+        <div id="cmp-en"><p class="note">选择一篇文献后即显示原文；译文按段落逐条对齐。</p></div>
       </div>
       <div class="card pane">
         <h5>中文 · 译文 <span class="chip" id="cmp-model" hidden></span></h5>
-        <div id="cmp-zh"><p class="note">点「翻译这一段」。公式、代码、变量名保留英文。</p></div>
+        <div id="cmp-zh"><p class="note">点击「翻译这一段」。公式、代码与变量名保留英文。</p></div>
       </div>
     </div>
   </div>
@@ -786,7 +813,7 @@ svg{width:100%;height:auto;display:block}
         <span id="graph-summary">正在建图…</span>
         <div class="spacer"></div>
         <div class="legend">
-          <span><i class="lg-paper"></i>库内论文（可点开）</span>
+          <span><i class="lg-paper"></i>库内论文（可点击展开）</span>
           <span><i class="lg-ref"></i>库外高频文献</span>
           <span><i class="lg-arrow" aria-hidden="true"></i>箭头指向被引方</span>
         </div>
@@ -804,12 +831,12 @@ svg{width:100%;height:auto;display:block}
 
       <div class="card pad" id="graph-detail-card">
         <h4 style="margin:0 0 var(--sp-1);font-size:var(--fs-sm)">节点详情</h4>
-        <p class="note" id="graph-detail" style="margin:0">点一下图上的节点看详情</p>
+        <p class="note" id="graph-detail" style="margin:0">点击图中节点查看详情</p>
       </div>
 
       <div class="card pad">
         <h4 style="margin:0 0 var(--sp-1);font-size:var(--fs-sm)">图谱解读</h4>
-        <p class="note" style="margin:0 0 10px">按引用结构直接读出的事实，不经大模型</p>
+        <p class="note" style="margin:0 0 10px">依据引用结构直接读出的事实，不经大模型处理</p>
         <div id="graph-narrative" style="font-size:var(--fs-sm);line-height:1.65;color:var(--ink-1)"></div>
       </div>
 
@@ -833,7 +860,7 @@ svg{width:100%;height:auto;display:block}
       <h1 style="font-size:var(--fs-lg)">从多个学术站点检索并入库</h1>
       <div class="bar" style="margin-bottom:var(--sp-2)">
         <div class="composer" style="flex:1">
-          <input id="arx-q" aria-label="检索论文" placeholder="比如：sparse attention long document retrieval">
+          <input id="arx-q" aria-label="检索论文" placeholder="示例：sparse attention long document retrieval">
         </div>
         <button class="btn primary" id="arx-run">检索</button>
       </div>
@@ -856,11 +883,11 @@ svg{width:100%;height:auto;display:block}
 <section class="view fill" id="view-recommend" role="tabpanel" aria-label="每日推荐">
   <div class="retrieve">
     <div class="card col">
-      <h1 style="font-size:var(--fs-lg)">最近挂在 arXiv 上的论文，按你库里的方向排</h1>
+      <h1 style="font-size:var(--fs-lg)">近期 arXiv 新论文，按库内研究方向排序</h1>
       <div class="bar" style="margin-bottom:var(--sp-2)">
         <div class="composer" style="flex:1">
           <input id="rec-cats" aria-label="arXiv 分类" value="cs.CL,cs.LG,cs.AI,cs.CV"
-                 placeholder="arXiv 分类，逗号分隔，比如 cs.CL,cs.LG">
+                 placeholder="arXiv 分类，逗号分隔，示例：cs.CL,cs.LG">
         </div>
         <label class="pick">最近
           <select id="rec-days" aria-label="时间窗">
@@ -880,7 +907,7 @@ svg{width:100%;height:auto;display:block}
   <div class="review">
     <div class="card col">
       <h1 style="font-size:var(--fs-lg)">领域综述 + 未来方向</h1>
-      <p class="sub">先检索库里真实原文，再让模型按证据写；编号与原文都由服务端回填，模型编的编号直接丢弃</p>
+      <p class="sub">先检索库内真实原文，再由模型依据证据撰写；编号与原文均由服务端回填，模型编造的编号一律丢弃</p>
       <div class="bar" style="margin-bottom:var(--sp-3)">
         <div class="composer" style="flex:1">
           <input id="rv-topic" aria-label="综述主题" placeholder="比如：稀疏注意力在长文档检索中的应用">
@@ -892,21 +919,21 @@ svg{width:100%;height:auto;display:block}
       </div>
       <span class="sub" id="rv-state" style="margin:0"></span>
       <div id="rv-out" style="margin-top:14px">
-        <p class="note" style="margin:0">给一个主题，点「生成综述」。每个要点的编号都能点回原文。</p>
+        <p class="note" style="margin:0">输入主题后点击「生成综述」。各要点后的编号可点击跳转至对应原文。</p>
       </div>
     </div>
     <div class="card col" style="grid-row:span 2">
       <h1 style="font-size:var(--fs-lg)">本次引用的原文</h1>
-      <p class="sub">综述里出现的每条引用都来自这里 —— 编号是检索到你库里的块</p>
+      <p class="sub">综述中的每条引用均出自此处 —— 编号对应检索命中的库内段落</p>
       <div id="rv-refs">
-        <p class="note" style="margin:0">还没生成。左边跑一次，这里会列出这次真正用到的原文。</p>
+        <p class="note" style="margin:0">尚未生成。在左侧运行后，此处列出本次实际引用的原文。</p>
       </div>
     </div>
     <div class="card col">
       <h1 style="font-size:var(--fs-lg)">未来方向</h1>
-      <p class="sub">从各篇的 Future Work / Limitations 里提炼；标成「已被解决」的是模型判断，需要人工复核</p>
+      <p class="sub">提炼自各篇的 Future Work / Limitations；标注「已被解决」者系模型判断，需人工复核</p>
       <div id="rv-future">
-        <p class="note" style="margin:0">生成综述后，这里列出 open / solved 两个状态的方向。</p>
+        <p class="note" style="margin:0">生成综述后，此处按 open / solved 两种状态列出方向。</p>
       </div>
     </div>
   </div>
@@ -917,10 +944,10 @@ svg{width:100%;height:auto;display:block}
   <div class="agent">
     <div class="card col">
       <h1 style="font-size:var(--fs-lg)">Agent 任务规划与执行</h1>
-      <p class="sub">一句话任务 → 先出计划（每步写清为什么）→ 逐步调工具，观测喂回模型再决定下一步</p>
+      <p class="sub">输入任务 → 生成计划（每步说明理由）→ 逐步调用工具，观测结果回传模型后决定下一步</p>
       <div class="composer" style="margin-bottom:var(--sp-3)">
         <input id="ag-task" aria-label="输入任务"
-               placeholder="示例：库里哪篇论文是被引用最多的基石论文？给出可引用的原文依据"
+               placeholder="示例：库内哪篇论文被引用最多？请给出可引用的原文依据"
                style="font-size:var(--fs-sm)">
       </div>
       <div style="display:flex;gap:var(--sp-2);align-items:center;flex-wrap:wrap;margin-bottom:18px">
@@ -930,26 +957,26 @@ svg{width:100%;height:auto;display:block}
       </div>
       <h1 style="font-size:var(--fs-md);margin:0 0 10px">计划</h1>
       <div id="ag-plan-out">
-        <p class="note" style="margin:0">还没有计划。点「只规划」看看它打算怎么做，点「规划并执行」看它真的做完。</p>
+        <p class="note" style="margin:0">尚无计划。点击「只规划」查看规划方案，点击「规划并执行」查看完整执行过程。</p>
       </div>
       <h1 style="font-size:var(--fs-md);margin:22px 0 10px">结论</h1>
       <div id="ag-answer">
-        <p class="note" style="margin:0">执行完成后，这里给出结论。结论里不写引用原文 —— 引用放在右栏，能点回原文。</p>
+        <p class="note" style="margin:0">执行完成后，此处给出结论。结论中不直接写入引用原文 —— 引用列于右栏，可点击跳转。</p>
       </div>
     </div>
 
     <div class="card col">
       <h1 style="font-size:var(--fs-lg)">工具箱</h1>
-      <p class="sub">工具名与参数由服务端校验；模型编出来的工具名、参数不合法的步骤会被丢弃并记进轨迹</p>
+      <p class="sub">工具名与参数由服务端校验；模型编造的工具名、参数不合法的步骤将被丢弃并记入轨迹</p>
       <div id="ag-tools"><p class="note" style="margin:0">正在读取工具清单…</p></div>
 
       <h1 style="font-size:var(--fs-lg);margin-top:22px">执行轨迹</h1>
-      <p class="sub">每一步的工具、耗时、观测预览。被丢弃的步骤也留在这里 —— 拦下来什么，比藏起来更有说服力</p>
-      <div id="ag-trace"><p class="note" style="margin:0">还没有执行记录。</p></div>
+      <p class="sub">记录每一步的工具、耗时与观测预览。被丢弃的步骤同样保留 —— 拦截内容比隐藏更有说服力</p>
+      <div id="ag-trace"><p class="note" style="margin:0">暂无执行记录。</p></div>
 
       <h1 style="font-size:var(--fs-lg);margin-top:22px">可引用的原文</h1>
-      <p class="sub">结论里每条引用都来自这里 —— 编号与原文由服务端回填，模型只给指针</p>
-      <div id="ag-evidence"><p class="note" style="margin:0">执行完成后，这里列出这次真正用到的原文块。</p></div>
+      <p class="sub">结论中的每条引用均出自此处 —— 编号与原文由服务端回填，模型仅返回指针</p>
+      <div id="ag-evidence"><p class="note" style="margin:0">执行完成后，此处列出本次实际使用的原文段落。</p></div>
     </div>
   </div>
 </section>
@@ -959,31 +986,31 @@ svg{width:100%;height:auto;display:block}
   <div class="copilot">
     <div class="card col">
       <h1 style="font-size:var(--fs-lg)">论文框架生成</h1>
-      <p class="sub">先检索库里真实原文，再让模型搭框架；挂不上原文的要点会被点名，不假装有依据</p>
+      <p class="sub">先检索库内真实原文，再由模型生成框架；无法对应原文的要点将被显式标出，不虚构依据</p>
       <div class="composer" style="margin-bottom:var(--sp-3)">
         <input id="cp-idea" placeholder="示例：用稀疏注意力降低长文档 RAG 的检索成本"
-               aria-label="输入你的研究 idea" style="font-size:var(--fs-sm)">
+               aria-label="输入研究构想" style="font-size:var(--fs-sm)">
       </div>
       <div style="display:flex;gap:var(--sp-2);align-items:center;margin-bottom:18px">
         <button class="btn primary" id="cp-run">生成框架</button>
         <span class="sub" id="cp-state" style="margin:0"></span>
       </div>
       <div id="cp-out">
-        <p class="note" style="margin:0">输一个 idea，点「生成框架」。每个要点后面的编号都能点回原文。</p>
+        <p class="note" style="margin:0">输入研究构想后点击「生成框架」。各要点后的编号可点击跳转至原文。</p>
       </div>
     </div>
 
     <div class="card col" style="grid-row:span 2">
       <h1 style="font-size:var(--fs-lg)">可引用的真实原文</h1>
-      <p class="sub">框架里出现的每一条引用，都来自这里 —— 编号是检索到你库里的块，不是模型编的</p>
+      <p class="sub">框架中的每条引用均出自此处 —— 编号对应检索命中的库内段落，并非模型编造</p>
       <div id="cp-refs">
-        <p class="note" style="margin:0">还没生成。左边跑一次，这里会列出这次真正用到的原文。</p>
+        <p class="note" style="margin:0">尚未生成。在左侧运行后，此处列出本次实际引用的原文。</p>
       </div>
     </div>
 
     <div class="card col" id="viz-card">
       <h1 style="font-size:var(--fs-lg)">数据可视化</h1>
-      <p class="sub">上传 CSV → 统计表 + SVG 图 + 学术图注。图注里的每个数字都要在统计卡里核实过，编造的会被标出来</p>
+      <p class="sub">上传 CSV → 统计表 + SVG 图 + 学术图注。图注中的每个数字均与统计量核对，无法核对者予以标注</p>
       <div style="display:flex;gap:var(--sp-2);align-items:center;margin-bottom:14px;flex-wrap:wrap">
         <button class="btn" id="viz-upload">选择 CSV</button>
         <button class="btn" id="viz-demo">用示例数据</button>
@@ -1001,7 +1028,7 @@ svg{width:100%;height:auto;display:block}
       </div>
       <div class="figure">
         <div id="viz-chart">
-          <p class="note" style="margin:0">还没有数据。选一个 CSV —— 数值列、日期列会自动认出来，也可以先点「用示例数据」看看整条链路。</p>
+          <p class="note" style="margin:0">暂无数据。请选择 CSV 文件 —— 数值列与日期列将自动识别；亦可点击「用示例数据」查看完整链路。</p>
         </div>
         <p class="caption" id="viz-caption"></p>
       </div>
@@ -1017,7 +1044,7 @@ svg{width:100%;height:auto;display:block}
 
     <div class="card col" id="tr-card" style="grid-column:1 / -1">
       <h1 style="font-size:var(--fs-lg)">中文 → 英文</h1>
-      <p class="sub">贴中文摘要或正文小节，逐段译成英文。公式、代码、引用标号必须原样保留 —— 哪一段没保住，那一段就退回原文并标出来，而不是悄悄放过</p>
+      <p class="sub">粘贴中文摘要或正文小节，逐段译为英文。公式、代码与引用标号须原样保留 —— 未能保留的段落退回原文并显式标注，不作静默放过</p>
       <div class="tr-grid">
         <div>
           <textarea id="tr-in" spellcheck="false"
@@ -1025,7 +1052,7 @@ svg{width:100%;height:auto;display:block}
           <div class="note" id="tr-count" style="margin:6px 0 0">0 / 20000 字</div>
         </div>
         <div id="tr-out" class="tr-out">
-          <p class="note" style="margin:0">译文出在这里，按段落对齐。</p>
+          <p class="note" style="margin:0">译文显示于此，按段落对齐。</p>
         </div>
       </div>
       <div style="display:flex;gap:var(--sp-2);align-items:center;margin-top:12px;flex-wrap:wrap">
@@ -1212,6 +1239,9 @@ svg{width:100%;height:auto;display:block}
   const state = {
     papers: [], paper: null, chunks: [], chunk: null, uploading: null,
     refs: [], refError: '',
+    // 图表要逐页找网格线（约 0.29 秒/页），所以 init 为 null＝还没解析过，
+    // 只有切到那一栏时才拉。null 和"解析完了但 0 张"必须分得开。
+    visuals: null, visualError: '', visualLoading: false,
   };
 
   // 中英对照的两侧是否联动滚动。放模块级而不是 state：它跟"当前文献"无关，
@@ -1315,14 +1345,19 @@ svg{width:100%;height:auto;display:block}
     state.chunk = null;
     state.refs = [];
     state.refError = '';
+    state.visuals = null;
+    state.visualError = '';
     $('page-mark').textContent = '—';
     $('page-title').textContent = '请先在文献库选择一篇论文';
-    $('page-text').replaceChildren(el('p', { class: 'note' }, '从左侧目录选择一个块开始阅读。'));
+    $('page-text').replaceChildren(el('p', { class: 'note' }, '请从左侧目录选择一段开始阅读。'));
     $('outline-list').replaceChildren();
     $('paper-meta').textContent = '';
     $('qa-chip').textContent = '未提问';
     $('ref-count').textContent = '—';
     $('ref-body').replaceChildren(el('p', { class: 'note', style: 'margin:0' }, '载入中…'));
+    $('visual-count').textContent = '—';
+    $('visual-body').replaceChildren(el('p', { class: 'note', style: 'margin:0' },
+      '切换至本栏后开始解析。'));
   }
 
   function renderLibrary() {
@@ -1333,8 +1368,7 @@ svg{width:100%;height:auto;display:block}
     state.papers.forEach((p) => {
       // 标题下必须带日期：同一篇的 v1 和 v7 标题一模一样，
       // 只列标题的话库里两行看着完全相同，等于没告诉用户哪个是新的
-      const meta = [p.filename, p.created_at ? `PDF 生成于 ${p.created_at}` : '生成日期未知']
-        .filter(Boolean).join(' · ');
+      const meta = [p.filename, paperDateLong(p)].filter(Boolean).join(' · ');
       // 点一行 = 打开这篇**并**切到阅读器。只 openPaper 不切视图的话，
       // 数据换了页却没换，看着像"点了没反应"。
       const tr = el('tr', { on: { click: () => openInReader(p.id) }, style: 'cursor:pointer' },
@@ -1352,7 +1386,7 @@ svg{width:100%;height:auto;display:block}
     const pages = state.papers.reduce((s, p) => s + p.pages, 0);
     $('lib-summary').textContent = state.papers.length
       ? `${state.papers.length} 篇文献 · 共 ${pages} 页 · 索引已在内存中`
-      : '库里还是空的 —— 上传一篇 PDF 开始';
+      : '文献库为空 —— 上传一篇 PDF 即可开始';
     empty.hidden = state.papers.length > 0;
 
     renderVersionPicker();
@@ -1376,11 +1410,19 @@ svg{width:100%;height:auto;display:block}
 
   /** 默认挑**同一篇**的两个版本。
       早先直接拿全局最早 + 全局最晚：库里有 541 页教材时，默认对就是
-      「Transformer v1 → 教材」，逐句对齐跑不完，点了对比像没反应。 */
+      「Transformer v1 → 教材」，逐句对齐跑不完，点了对比像没反应。
+
+      分组键优先用 arXiv 号：标题是"认"出来的，扫描件靠 OCR、正常版靠版面，
+      两边差一个词（连字符、识别误差）就分不到一组 —— 那样就会退回到"随便
+      挑两篇"，默认对变成 BERT ↔ 扫描件。arXiv 号是精确标识，有它就不会错。 */
+  function pairKey(p) {
+    return p.arxiv_id ? `arxiv:${p.arxiv_id}` : `title:${normTitle(p.title)}`;
+  }
+
   function pickVersionPair(sorted) {
     const groups = new Map();
     for (const p of sorted) {          // sorted 按时间升序，组内天然也是升序
-      const key = normTitle(p.title);
+      const key = pairKey(p);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(p);
     }
@@ -1388,7 +1430,11 @@ svg{width:100%;height:auto;display:block}
       .sort((a, b) => b.length - a.length);
     if (pairs.length) {
       const g = pairs[0];
-      return { oldId: g[0].id, newId: g[g.length - 1].id, same: true };
+      // 组内按 arXiv 版本号排，取不到版本号再退回时间顺序
+      const byVer = [...g].sort((a, b) => (a.arxiv_version || 0) - (b.arxiv_version || 0));
+      const hasVer = byVer.some((p) => p.arxiv_version);
+      const order = hasVer ? byVer : g;
+      return { oldId: order[0].id, newId: order[order.length - 1].id, same: true };
     }
     return {
       oldId: sorted[0] ? sorted[0].id : '',
@@ -1397,16 +1443,43 @@ svg{width:100%;height:auto;display:block}
     };
   }
 
+  /** 版本下拉的排序：**同一篇必须按版本号排**，别的篇之间按时间排。
+
+      全都按时间排会出事：v1 那份是扫描件，PDF 里没有生成日期，只能退回上传时间
+      （今天），于是它在「旧版」下拉里排到了 v7 上面 —— 选项标签写着 v1，位置却在
+      最下面，用户按位置选就选反了。先给每一组取"组内最早的时间"当组的排序键，
+      组内再按版本号排：既是全序（不会出现 A<B<C<A），v1 也稳稳在 v7 前面。 */
+  function sortForVersionPickers(papers) {
+    const groups = new Map();
+    for (const p of papers) {
+      const key = pairKey(p);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(p);
+    }
+    const when = (p) => Date.parse(p.created_at || p.uploaded_at) || Infinity;
+    const byVersion = (a, b) => {
+      if (a.arxiv_version && b.arxiv_version) return a.arxiv_version - b.arxiv_version;
+      return (a.created_at || a.uploaded_at).localeCompare(b.created_at || b.uploaded_at);
+    };
+    return [...groups.values()]
+      .map((list) => ({ list, first: Math.min(...list.map(when)) }))
+      .sort((x, y) => x.first - y.first)
+      .flatMap(({ list }) => [...list].sort(byVersion));
+  }
+
   /** 下拉里必须带日期：两版标题一模一样，只看标题分不出谁是谁。 */
   function renderVersionPicker() {
     const oldSel = $('ver-old'), newSel = $('ver-new');
     if (!oldSel || !newSel) return;
     const keepOld = oldSel.value, keepNew = newSel.value;
 
-    const sorted = [...state.papers].sort((a, b) =>
-      (a.created_at || a.uploaded_at).localeCompare(b.created_at || b.uploaded_at));
+    const sorted = sortForVersionPickers(state.papers);
+    // 有 arXiv 版本号就写 v7，比"日期未知"有用得多；扫描件要标出来，
+    // 否则下拉里两行一模一样，看不出哪一行是扫描的
+    const verLabel = (p) => (p.arxiv_version ? `v${p.arxiv_version}`
+      : (p.created_at || p.arxiv_date || '日期未知'));
     const option = (p) => el('option', { value: p.id },
-      `${p.title.slice(0, 46)} · ${p.created_at || '日期未知'}`);
+      `${p.title.slice(0, 46)} · ${verLabel(p)}${p.scanned ? ' · 扫描件' : ''}`);
 
     oldSel.replaceChildren(...sorted.map(option));
     newSel.replaceChildren(...[...sorted].reverse().map(option));
@@ -1418,19 +1491,50 @@ svg{width:100%;height:auto;display:block}
 
     const enough = sorted.length >= 2;
     $('ver-run').disabled = !enough;
-    $('ver-state').textContent = !enough ? '库里至少要有两篇才能比'
-      : pair.same ? '' : '库里还没有同一篇的两个版本，下面默认挑的是任意两篇';
+    $('ver-state').textContent = !enough ? '库内至少需要两篇文献才能对比'
+      : pair.same ? '' : '库内尚无同一篇的两个版本，下方默认选取任意两篇';
   }
 
-  /** 谁更新的提示：日期取不到时什么都不说，绝不猜。 */
-  function recommendHint(rec) {
+  /** 日期怎么显示。PDF 生成日期和 arXiv 投稿日期**不是一回事**，不能混写一句话。
+      arXiv 从 2025 年起改用 GenPDF 导出，PDF 元数据里不再写 creationDate ——
+      这批论文的 created_at 全是空串。以前的界面一律写「生成日期未知」，
+      看着像解析坏了，其实文件里真的没有；而首页那行投稿戳上印着日期，
+      只是它表示的是"这一版什么时候投的"，所以措辞必须跟着换。 */
+  function paperDateLong(p) {
+    if (p.created_at) return `PDF 生成于 ${p.created_at}`;
+    if (p.arxiv_date) return `arXiv 投稿于 ${p.arxiv_date}`;
+    return '生成日期未知';
+  }
+
+  /** 同上，只是塞进「v7 · 2024-04-10 · 扫描件」这种短行里。 */
+  function paperDateShort(p) {
+    if (p.created_at) return p.created_at;
+    if (p.arxiv_date) return `arXiv ${p.arxiv_date}`;
+    return '日期未知';
+  }
+
+  /** 「v7 · 2024-04-10 · 扫描件」：判新旧要看的三样东西，一行里都得有。
+      只写日期等于让人拿"哪份 PDF 先导出"去解释"哪篇论文更新"。 */
+  function paperMeta(p) {
+    return [
+      p.arxiv_version ? `v${p.arxiv_version}` : '',
+      paperDateShort(p),
+      p.scanned ? '扫描件' : '',
+    ].filter(Boolean).join(' · ');
+  }
+
+  /** 谁更新的提示。判断不出来时什么都不猜。
+     文案必须说清**凭什么**判的：版本号和 PDF 生成日期是两回事，
+     同一个建议用错依据就成了假话（v7 顶掉 v1，而 v1 恰好是后来重导的那份）。 */
+  function recommendHint(rec, by) {
+    const how = by === 'arxiv_version' ? '版本号' : 'PDF 生成日期';
     if (rec === 'replace_existing') {
-      return el('p', { class: 'hint' }, '这份的 PDF 生成日期更晚 —— 看起来是更新的版本。');
+      return el('p', { class: 'hint' }, `这份的${how}显示其更新 —— 应为较新的版本。`);
     }
     if (rec === 'keep_existing') {
-      return el('p', { class: 'hint' }, '库中已有版本较新 —— 建议保留库里那份。');
+      return el('p', { class: 'hint' }, `库中已有那版的${how}显示其更新 —— 建议保留库内版本。`);
     }
-    return el('p', { class: 'hint' }, '两份的 PDF 生成日期不完整，无法判断谁更新，请自己确认。');
+    return el('p', { class: 'hint' }, '两份的版本号与 PDF 生成日期均不完整，无法判断新旧，请自行确认。');
   }
 
   /** 上传后若撞上库里的版本，给出可操作的提示 —— 这正是官方用例 3.1。 */
@@ -1460,11 +1564,11 @@ svg{width:100%;height:auto;display:block}
       el('div', { class: 'ic', 'aria-hidden': 'true' }, '⧉'),
       el('div', {},
         el('h3', {}, TITLE[body.relation] || '库里已有相似的另一篇'),
-        el('p', {}, `正文指纹相似度 ${pct}% —— 判定看的是正文内容，不是文件名。`),
+        el('p', {}, `正文指纹相似度 ${pct}% —— 判定依据为正文内容，而非文件名。`),
         el('div', { class: 'cmp' },
           el('span', {}, '库里已有 ', el('b', {}, other.title || body.duplicate_title || ''),
-            ` · ${other.created_at || '日期未知'}`),
-          el('span', {}, '本次上传 ', el('b', {}, body.title), ` · ${body.created_at || '日期未知'}`),
+            ` · ${paperMeta(other)}`),
+          el('span', {}, '本次上传 ', el('b', {}, body.title), ` · ${paperMeta(body)}`),
         ),
         el('div', { class: 'acts' },
           el('button', {
@@ -1481,9 +1585,9 @@ svg{width:100%;height:auto;display:block}
             class: 'btn',
             on: { click: () => upload(file, { onDuplicate: 'replace' }) },
           }, replaceLabel),
-          el('button', { class: 'btn', on: { click: () => renderDupAlert(null) } }, '保留：两份都留着'),
+          el('button', { class: 'btn', on: { click: () => renderDupAlert(null) } }, '保留：两份均保留'),
         ),
-        recommendHint(body.recommendation),
+        recommendHint(body.recommendation, body.recommendation_by),
       ),
     );
     box.hidden = false;
@@ -1511,7 +1615,7 @@ svg{width:100%;height:auto;display:block}
     if (!oldId || !newId) return;
     if (oldId === newId) {
       panel.replaceChildren(el('div', { class: 'vbody' },
-        el('p', { class: 'note', style: 'margin:0' }, '两版选的是同一份文献，换一个再比。')));
+        el('p', { class: 'note', style: 'margin:0' }, '两版选择的是同一份文献，请更换后再对比。')));
       return;
     }
 
@@ -1520,7 +1624,7 @@ svg{width:100%;height:auto;display:block}
     $('ver-state').textContent = '逐句对齐中…';
     panel.replaceChildren(el('div', { class: 'vbody' },
       el('p', { class: 'note', style: 'margin:0' }, summarize
-        ? '正在对齐两版句子 → 过滤排版噪声 → 请大模型归纳…（15 页约 3 秒）'
+        ? '正在对齐两版句子 → 过滤排版噪声 → 由大模型归纳…（15 页约 3 秒）'
         : '正在对齐两版句子 → 过滤排版噪声…')));
 
     try {
@@ -1577,12 +1681,29 @@ svg{width:100%;height:auto;display:block}
     const relation = RELATION_TEXT[d.relation] || d.relation;
     const pct = ((d.similarity || 0) * 100).toFixed(1);
 
+    // 「v.日期」这种写法是错的：日期不是版本号。有 arXiv 号就写 v7，
+    // 没有就写日期，两样都没有就老实说不知道。
+    const sideLabel = (p) => [
+      p.arxiv_version ? `v${p.arxiv_version}` : '',
+      (p.created_at || p.arxiv_date) ? paperDateShort(p)
+        : (p.arxiv_version ? '' : '日期未知'),
+      p.scanned ? '扫描件' : '',
+      `${p.pages} 页`,
+    ].filter(Boolean).join(' · ');
+
+    // 新旧是凭什么判的，说清楚 —— "上传得晚"不等于"版本更新"
+    const ORDER_TEXT = {
+      arxiv_version: '按 arXiv 版本号排序',
+      date: '按 PDF 生成日期排序',
+      uploaded_at: '两版均无法取得版本号与生成日期，此处按上传时间排序，不代表论文本身的新旧',
+    };
+
     const head = el('div', { class: 'head' },
       el('b', {}, d.old.title),
-      el('span', {}, `v.${d.old.created_at || '日期未知'} · ${d.old.pages} 页`),
+      el('span', {}, sideLabel(d.old)),
       el('span', { 'aria-hidden': 'true' }, '→'),
       el('b', {}, d.new.title),
-      el('span', {}, `v.${d.new.created_at || '日期未知'} · ${d.new.pages} 页`),
+      el('span', {}, sideLabel(d.new)),
       el('span', { class: 'chip' }, `${relation} · ${pct}%`),
     );
 
@@ -1591,7 +1712,20 @@ svg{width:100%;height:auto;display:block}
     // 正文重合度低的时候必须说清楚，否则"没找到改动"会被误读成"两版一样"
     if (d.relation === 'related' || d.relation === 'distinct') {
       body.append(el('p', { class: 'note', style: 'margin:0 0 var(--sp-3);color:var(--warn)' },
-        `两版正文重合度只有 ${pct}%，它们可能根本不是同一篇文献的不同版本，下面的差异需谨慎看待。`));
+        `两版正文重合度只有 ${pct}%，可能并非同一篇文献的不同版本，下列差异需谨慎看待。`));
+    }
+
+    // 有一侧是扫描件：OCR 的逐字误差会被算成改动，不说清楚就成了"作者改了 50 句"
+    if (d.ocr_side) {
+      const which = { old: '旧版', new: '新版', both: '两版' }[d.ocr_side] || '其中一版';
+      body.append(el('p', { class: 'note', style: 'margin:0 0 var(--sp-3);color:var(--warn)' },
+        `${which}是扫描件，正文由 OCR 识别。字母误认（l/1、0/O）、断词、空格这类识别误差`
+        + `亦会被逐句对齐计为「改动」—— 下列条数偏多属正常，判读时以语义是否变化为准。`));
+    }
+
+    // 新旧依据：上传时间只能说明"你什么时候传的"，不能说成版本先后
+    if (ORDER_TEXT[d.order_by]) {
+      body.append(el('p', { class: 'note', style: 'margin:0 0 var(--sp-3)' }, ORDER_TEXT[d.order_by]));
     }
 
     body.append(el('p', { class: 'note', style: 'margin:0 0 var(--sp-3)' },
@@ -1609,7 +1743,7 @@ svg{width:100%;height:auto;display:block}
     } else if (summaryPending) {
       // 这次根本没问大模型 —— 千万不能写成"模型认为没有实质修改"，那是另一件事。
       body.append(el('p', { class: 'note', style: 'margin:0 0 var(--sp-3)' },
-        '下面是逐句对齐的原始改动，未经归纳。要中文摘要再点一下（会调用大模型）：'));
+        '以下为逐句对齐的原始改动，未经归纳。需要中文摘要请点击下方按钮（将调用大模型）：'));
       body.append(el('button', {
         class: 'btn', style: 'margin-bottom:var(--sp-3)',
         on: { click: () => runCompare() },
@@ -1617,10 +1751,10 @@ svg{width:100%;height:auto;display:block}
     } else if (!d.summary_ok) {
       // 摘要为空可能是"确实没差异"，也可能是"模型挂了" —— 必须分开说
       body.append(el('p', { class: 'note', style: 'margin:0 0 var(--sp-3);color:var(--warn)' },
-        `大模型没能给出归纳（${d.summary_note || '原因未知'}）。下面是逐句对齐的原始改动，未经归纳。`));
+        `大模型未能给出归纳（${d.summary_note || '原因未知'}）。以下为逐句对齐的原始改动，未经归纳。`));
     } else {
       body.append(el('p', { class: 'note', style: 'margin:0 0 var(--sp-3)' },
-        '大模型认为两版没有实质修改 —— 剩下的都是排版与编号位移。'));
+        '大模型判断两版无实质修改 —— 其余差异均为排版与编号位移。'));
     }
 
     body.append(el('h6', {}, '逐句对齐结果'));
@@ -1692,6 +1826,11 @@ svg{width:100%;height:auto;display:block}
     const btn = $('upload-btn');
     btn.disabled = true;
     showNote(`正在解析 ${file.name}…`);
+    // 扫描件要走 OCR，一页六到九秒，十几页就是两分钟。前端拿不到任何进度，
+    // 干等着会被当成"卡死了"——过一会儿就把话说清楚，别让人猜。
+    const slow = setTimeout(() => {
+      showNote(`仍在解析 ${file.name}…扫描件要逐页走 OCR，十几页通常需要一两分钟。`);
+    }, 8000);
     try {
       const form = new FormData();
       form.append('file', file);
@@ -1712,6 +1851,7 @@ svg{width:100%;height:auto;display:block}
         showNote(`上传失败：${err.message}`, 'error');
       }
     } finally {
+      clearTimeout(slow);
       btn.disabled = false;
       $('upload-input').value = '';   // 允许再次选择同一个文件
     }
@@ -1723,7 +1863,10 @@ svg{width:100%;height:auto;display:block}
     if (!list.length) return;
     const btn = $('upload-btn');
     btn.disabled = true;
-    showNote(`正在解析 ${list.length} 个文件…（页数多的话要等一会儿）`);
+    showNote(`正在解析 ${list.length} 个文件…（页数较多时需稍候）`);
+    const slow = setTimeout(() => {
+      showNote(`仍在解析这 ${list.length} 个文件…扫描件需逐页 OCR，耗时明显长于普通 PDF。`);
+    }, 8000);
     renderDupAlert(null);
     try {
       const form = new FormData();
@@ -1738,6 +1881,7 @@ svg{width:100%;height:auto;display:block}
     } catch (err) {
       showNote(`批量上传失败：${err.message}`, 'error');
     } finally {
+      clearTimeout(slow);
       btn.disabled = false;
       $('upload-input').value = '';
     }
@@ -1775,10 +1919,10 @@ svg{width:100%;height:auto;display:block}
       el('div', { class: 'ic', 'aria-hidden': 'true' }, '⧉'),
       el('div', {},
         el('h3', {}, '库里已有同一篇的另一个版本'),
-        el('p', {}, `按"保留"策略，这份没有入库。要覆盖库里那版吗？这一步会删掉库里的文件，不可撤销。`),
+        el('p', {}, `按「保留」策略，本次未入库。是否覆盖库内版本？此操作将删除库内文件，且不可撤销。`),
         el('div', { class: 'cmp' },
-          el('span', {}, '库里已有 ', el('b', {}, existing.title || ''), ` · ${existing.created_at || '日期未知'}`),
-          el('span', {}, '本次上传 ', el('b', {}, uploaded.title || ''), ` · ${uploaded.created_at || '日期未知'}`),
+          el('span', {}, '库里已有 ', el('b', {}, existing.title || ''), ` · ${paperMeta(existing)}`),
+          el('span', {}, '本次上传 ', el('b', {}, uploaded.title || ''), ` · ${paperMeta(uploaded)}`),
         ),
         el('div', { class: 'acts' },
           el('button', {
@@ -1795,9 +1939,9 @@ svg{width:100%;height:auto;display:block}
               },
             },
           }, '先对比两版 →'),
-          el('button', { class: 'btn', on: { click: () => renderDupAlert(null) } }, '保留：什么都不做'),
+          el('button', { class: 'btn', on: { click: () => renderDupAlert(null) } }, '保留：不执行操作'),
         ),
-        recommendHint(uploaded.recommendation),
+        recommendHint(uploaded.recommendation, uploaded.recommendation_by),
       ),
     );
     box.hidden = false;
@@ -1806,16 +1950,33 @@ svg{width:100%;height:auto;display:block}
   // ---------------------------------------------------------------- 阅读器
 
   /** 阅读器顶部的换文献下拉。库变了（上传/重启）也要跟着重填。 */
+  /** 下拉里光有标题和页数不够：同一篇的 v1 扫描件与 v7 文字版，
+      这两样一模一样，选错了才发现答的内容不是自己以为的那份。
+      所以版本号、扫描件标记要跟着标题一起写。 */
+  function paperLabel(p) {
+    const tags = [
+      p.arxiv_version ? `v${p.arxiv_version}` : '',
+      p.scanned ? '扫描件' : '',
+      `${p.pages} 页`,
+    ].filter(Boolean);
+    return `${p.title.slice(0, 40)} · ${tags.join(' · ')}`;
+  }
+
   function renderPaperPicker() {
     const sel = $('paper-pick');
     if (!sel) return;
-    const option = (p) => el('option', { value: p.id },
-      `${p.title.slice(0, 46)} · ${p.pages} 页`);
+    const option = (p) => el('option', { value: p.id }, paperLabel(p));
     sel.replaceChildren(...state.papers.map(option));
     if (state.paper) sel.value = state.paper.id;
     else if (state.papers[0]) sel.value = state.papers[0].id;
     $('paper-meta').textContent = state.paper
-      ? `${state.paper.pages} 页 · ${state.paper.chunks} 块${state.paper.created_at ? ` · PDF 生成于 ${state.paper.created_at}` : ''}`
+      ? [
+          `${state.paper.pages} 页`,
+          `${state.paper.chunks} 块`,
+          state.paper.arxiv_version ? `v${state.paper.arxiv_version}` : '',
+          state.paper.scanned ? '扫描件（正文来自 OCR）' : '',
+          (state.paper.created_at || state.paper.arxiv_date) ? paperDateLong(state.paper) : '',
+        ].filter(Boolean).join(' · ')
       : '';
   }
 
@@ -1826,6 +1987,13 @@ svg{width:100%;height:auto;display:block}
   }
 
   async function openPaper(id) {
+    // 换文献：上一份的图表清单、计数和"还没解析"标记都得一起清掉，
+    // 否则切到图表栏看到的是别人的表
+    state.visuals = null;
+    state.visualError = '';
+    $('visual-count').textContent = '—';
+    $('visual-body').replaceChildren(el('p', { class: 'note', style: 'margin:0' },
+      '切换至本栏后开始解析。'));
     try {
       state.paper = await api(`/papers/${id}`);
       state.chunks = await api(`/papers/${id}/chunks`);
@@ -1839,7 +2007,7 @@ svg{width:100%;height:auto;display:block}
       $('qa-chip').textContent = '未提问';
       $('qa-body').replaceChildren(
         el('p', { class: 'note', style: 'margin:0' },
-          `已载入《${state.paper.title}》：${state.paper.chunks} 个块。问任何细节，结论都会回原文核对。`),
+          `已载入《${state.paper.title}》：共 ${state.paper.chunks} 个块。可就任意细节提问，结论均回原文核验。`),
       );
     } catch (err) {
       showNote(`打开文献失败：${err.message}`, 'error');
@@ -1943,12 +2111,15 @@ svg{width:100%;height:auto;display:block}
     $('ref-count').textContent = String(refs.length);
     if (!refs.length) {
       box.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
-        '这篇里没找到参考文献（没有 References / Bibliography 节，或是纯扫描件）。'));
+        '未在本篇中找到参考文献（无 References / Bibliography 章节，或为纯扫描件）。'));
       return;
     }
     // 先把带标记的排前面：评委要看的是"正文里的 [11] 能不能跳过去"，
     // 那些只认出标记、没解出标题的条目照样列出，只是把它的话说清楚
-    box.replaceChildren(...refs.map((r) => el('div', {
+    // 扫描件的参考文献标题同样来自 OCR：translatc / statistica 这种残渣
+    // 会被当成"标题里有错别字"，得先说清是识别误差，不是解析器读错了
+    const head = state.paper && state.paper.scanned ? [scannedNote()] : [];
+    box.replaceChildren(...head, ...refs.map((r) => el('div', {
       class: 'refrow', 'data-key': r.key, role: 'button', tabindex: '0',
       on: {
         click: () => jumpToCite(r.key),
@@ -1962,9 +2133,95 @@ svg{width:100%;height:auto;display:block}
     )));
   }
 
+  /* 图表栏要逐页跑 find_tables()（约 0.29 秒/页），40 页上限就是十几秒。
+     所以它跟参考文献不一样：不做成打开文献就预取，而是切到这一栏才拉。 */
+  async function loadVisuals(paperId) {
+    state.visuals = null;
+    state.visualError = '';
+    state.visualLoading = true;
+    $('visual-count').textContent = '…';
+    $('visual-body').replaceChildren(el('p', { class: 'note', style: 'margin:0' },
+      '正在解析表格与插图…首次约需十秒（逐页检测网格线），完成后写入磁盘，再次访问即刻可用。'));
+    try {
+      const [tables, figures] = await Promise.all([
+        api(`/papers/${paperId}/tables`),
+        api(`/papers/${paperId}/figures`),
+      ]);
+      if (!state.paper || state.paper.id !== paperId) return;  // 期间换过文献，结果作废
+      state.visuals = { tables, figures };
+      renderVisuals();
+    } catch (err) {
+      if (!state.paper || state.paper.id !== paperId) return;
+      state.visualError = err.message;
+      $('visual-count').textContent = '0';
+      $('visual-body').replaceChildren(el('p', { class: 'note', style: 'margin:0' },
+        `图表没取到：${err.message}`));
+    } finally {
+      state.visualLoading = false;
+    }
+  }
+
+  /** 标题里已经写了 "Table 2.1: Sizes ..."，另起一行显示时把那截前缀去掉。 */
+  function capBody(caption) {
+    return (caption || '')
+      .replace(/^(?:table|figure|fig\.?|图|表)\s*\d+(?:\.\d+)*[a-z]?\s*[:：.]?\s*/i, '')
+      .trim();
+  }
+
+  function renderVisuals() {
+    const tables = state.visuals.tables.tables;
+    const figures = state.visuals.figures.figures;
+    $('visual-count').textContent = String(tables.length + figures.length);
+
+    const nodes = [];
+    // 两个端点共用同一份解析结果，note 只说一遍（"表格 4 张、插图 2 幅"）
+    if (state.visuals.tables.note) {
+      nodes.push(el('p', { class: 'note', style: 'margin:0' }, state.visuals.tables.note));
+    }
+    tables.forEach((t) => nodes.push(tableCard(t)));
+    figures.forEach((f) => nodes.push(figureCard(f)));
+    $('visual-body').replaceChildren(...nodes);
+  }
+
+  /** 一张表：真 <table>，不是把行拼成一串文字 —— 数字要留在自己那一格里。 */
+  function tableCard(t) {
+    const body = capBody(t.caption);
+    return el('div', { class: 'figcard' },
+      el('div', { class: 'vcap' },
+        el('span', {}, t.label || '表格'),
+        el('span', { class: 'pg' }, `p.${t.page} · ${t.n_rows}×${t.n_cols}`)),
+      body ? el('p', { class: 'note', style: 'margin:0' }, body) : '',
+      el('div', { class: 'dwrap' },
+        el('table', { class: 'dtable' },
+          el('tbody', {}, ...t.rows.map((row, i) => el('tr', {},
+            ...Array.from({ length: t.n_cols }, (_, c) => {
+              const cell = row[c] === undefined ? '' : row[c];
+              return i === 0 ? el('th', {}, cell) : el('td', {}, cell);
+            })))))));
+  }
+
+  /** 一幅插图：缩略图由后端按版面重渲染，直接给 <img> 用，省得下载几 MB 原图。 */
+  function figureCard(f) {
+    const body = capBody(f.caption);
+    return el('div', { class: 'figcard' },
+      el('div', { class: 'vcap' },
+        el('span', {}, f.label || `插图 ${f.index + 1}`),
+        el('span', { class: 'pg' }, `p.${f.page}`)),
+      el('img', {
+        class: 'thumb', src: f.thumb, loading: 'lazy', decoding: 'async',
+        alt: body || f.label || '插图',
+        on: {
+          error: (e) => {
+            e.target.replaceWith(el('p', { class: 'note', style: 'margin:0' }, '该图无法渲染'));
+          },
+        },
+      }),
+      body ? el('p', { class: 'note', style: 'margin:0' }, body) : '');
+  }
+
   /** 正文 → 参考文献。找不到就明说，不要静默什么都不发生。 */
   function jumpToRef(key) {
-    setRefTab('refs');
+    setSideTab('refs');
     const row = $('ref-body').querySelector(`.refrow[data-key="${CSS.escape(key)}"]`);
     if (!row) {
       showNote(`正文标记 [${key}] 在参考文献里没解析到对应条目`, 'error');
@@ -1993,14 +2250,20 @@ svg{width:100%;height:auto;display:block}
     setTimeout(() => node.classList.remove('flash'), 1500);
   }
 
-  /** 右栏两个标签：问答 / 参考文献。切到参考文献时把输入框藏起来 —— 对着文献列表打字没有意义。 */
-  function setRefTab(name) {
-    const isRefs = name === 'refs';
-    $('tab-qa').setAttribute('aria-selected', String(!isRefs));
-    $('tab-refs').setAttribute('aria-selected', String(isRefs));
-    $('qa-body').hidden = isRefs;
-    $('ref-body').hidden = !isRefs;
-    $('qa-foot').hidden = isRefs;
+  /** 右栏三个标签：问答 / 参考文献 / 图表。离开问答时把输入框藏起来 ——
+      对着文献列表或图表打字没有意义，露着只会让人以为问的是那张表。 */
+  function setSideTab(name) {
+    $('tab-qa').setAttribute('aria-selected', String(name === 'qa'));
+    $('tab-refs').setAttribute('aria-selected', String(name === 'refs'));
+    $('tab-visual').setAttribute('aria-selected', String(name === 'visual'));
+    $('qa-body').hidden = name !== 'qa';
+    $('ref-body').hidden = name !== 'refs';
+    $('visual-body').hidden = name !== 'visual';
+    $('qa-foot').hidden = name !== 'qa';
+    // 图表是懒解析：第一次切过来才请求，解析完留在 state 里，来回切不再等
+    if (name === 'visual' && state.paper && state.visuals === null && !state.visualLoading) {
+      loadVisuals(state.paper.id);
+    }
   }
 
   function renderChunk(chunk, highlight = '') {
@@ -2063,19 +2326,62 @@ svg{width:100%;height:auto;display:block}
     );
   }
 
+  // 检索 0 块时不要说"证据不足"——那是一句正确但吓人的话。
+  // 寒暄本来就不是论文问题，直接说明"我只读这篇论文"并给出可问的例子；
+  // 真问题没命中则是另一套话：告诉对方换论文里的原词（论文是英文的）。
+  const SMALL_TALK = /^(你好|您好|hi|hello|hey|嗨|哈喽|在吗|谢谢|thanks?|thank you|你是谁|怎么用|帮助|help|test|测试|1)$/i;
+  function noHitsHint(question) {
+    const q = String(question || '').trim().replace(/[。！？，,.!?~～\s]+$/g, '').toLowerCase();
+    const title = state.paper && state.paper.title ? `《${state.paper.title}》` : '这篇论文';
+    if (SMALL_TALK.test(q)) {
+      return `我是${title}的精读助手，只依据论文原文作答，故无法回应寒暄。`
+        + '可尝试如下提问：这篇论文解决什么问题？实验用了哪些数据集？'
+        + '（论文为英文，使用英文术语命中率更高，例如 how many attention heads）';
+    }
+    return `本篇未检索到与问题相关的内容（0 块）。`
+      + '可改用论文原文用词重试，英文术语命中率更高；亦可切换至「图表」栏查看表格与插图。';
+  }
+
+  /** 校验统计那一行。「0 通过 0 拦截」不是"护栏没工作"，是"没有可校验的结论"，
+      两种意思必须分开写，否则演示时最容易被念成"你的护栏一条都没拦住"。 */
+  function verifyLine(stats, evidenceCount = 0) {
+    const s = stats || {};
+    const total = (s.supported || 0) + (s.weak || 0) + (s.unsupported || 0);
+    // 一条结论都没有，分两种情形说：检索到了证据但模型判定不足以回答，
+    // 和压根没检索到证据。写成「校验环节无输入」两种都盖过去了，读者分不清
+    // 是"这篇论文没讲"还是"系统没找到"。
+    if (!total) {
+      return evidenceCount
+        ? '已检索到证据，但模型判断不足以给出结论'
+        : '未检索到相关原文';
+    }
+    return `通过 ${s.supported || 0} · 待确认 ${s.weak || 0} · 拦截 ${s.unsupported || 0}`;
+  }
+
+  /** 扫描件的引文来自 OCR：符号、下标、连字符都可能和纸面不同。
+      用户对着原文一核对就会以为系统抄错了，所以要在结论前面先说清楚。 */
+  function scannedNote() {
+    return el('p', { class: 'note', style: 'margin:0 0 var(--sp-2);color:var(--warn)' },
+      '本篇为扫描件：正文、引文与参考文献标题均来自 OCR 识别，等号、下标、连字符等符号'
+      + '可能与纸面存在差异，页码与高亮位置亦可能有若干字符偏移。');
+  }
+
   function renderAnswer(data) {
     const body = $('qa-body');
     body.replaceChildren();
     body.append(el('div', { class: 'q' }, data.question));
 
+    // 一条结论都没生成时，别写「通过 0 · 待确认 0 · 拦截 0」——
+    // 那读起来像"护栏什么都没做"，其实是"这次没有可校验的东西"
     const think = el('div', { class: 'think' },
-      `检索 ${data.evidence.length} 块 · ${data.took_ms}ms · `
-      + `通过 ${data.stats.supported} · 待确认 ${data.stats.weak} · 拦截 ${data.stats.unsupported}`);
+      `检索 ${data.evidence.length} 块 · ${data.took_ms}ms · ` + verifyLine(data.stats, data.evidence.length));
     body.append(think);
+    if (data.scanned) body.append(scannedNote());
 
     if (!data.claims.length) {
       body.append(el('p', { class: 'note', style: 'margin:0' },
-        '证据不足，未给出结论。下面仍列出检索到的原文块，可自行判断。'));
+        data.evidence.length ? '证据不足，未给出结论。下方仍列出检索到的原文段落，可自行判断。'
+          : noHitsHint(data.question)));
     }
 
     data.claims.forEach((c) => {
@@ -2171,7 +2477,7 @@ svg{width:100%;height:auto;display:block}
     const items = draftClaims(raw);
     const draft = el('div', { class: 'draft' });
     if (!items.length) {
-      draft.append(el('div', { class: 'think' }, '模型正在生成…（草稿还没成形）'));
+      draft.append(el('div', { class: 'think' }, '模型正在生成…（草稿尚未成形）'));
     } else {
       items.forEach((it, i) => draft.append(el('p', {
         class: 'draftline',
@@ -2194,12 +2500,13 @@ svg{width:100%;height:auto;display:block}
     body.replaceChildren();
     body.append(el('div', { class: 'q' }, question));
     body.append(el('div', { class: 'think' },
-      `检索 ${hits.length} 块 · ${tookMs}ms · `
-      + `通过 ${stats.supported || 0} · 待确认 ${stats.weak || 0} · 拦截 ${stats.unsupported || 0}`));
+      `检索 ${hits.length} 块 · ${tookMs}ms · ` + verifyLine(stats, hits.length)));
+    if (state_.scanned) body.append(scannedNote());
 
     if (!claims.length) {
       body.append(el('p', { class: 'note', style: 'margin:0' },
-        '证据不足，未给出结论。下面仍列出检索到的原文块，可自行判断。'));
+        hits.length ? '证据不足，未给出结论。下方仍列出检索到的原文段落，可自行判断。'
+          : noHitsHint(question)));
     }
     claims.forEach((c) => {
       const block = el('div', { class: 'a' });
@@ -2264,6 +2571,9 @@ svg{width:100%;height:auto;display:block}
     const btn = $('qa-send');
     btn.disabled = true;
     $('qa-chip').textContent = '检索中…';
+    // 人在参考文献或图表栏上按回车也得看得见答案：先切回问答，
+    // 否则结果写进了 hidden 的面板，看着像"问了没反应"
+    setSideTab('qa');
     const body = $('qa-body');
     body.replaceChildren(
       el('div', { class: 'q' }, question),
@@ -2321,6 +2631,7 @@ svg{width:100%;height:auto;display:block}
             acc.stats = p.stats || {};
           } else if (ev.event === 'done') {
             acc.tookMs = p.took_ms || 0;
+            acc.scanned = Boolean(p.scanned);
             acc.done = true;
           } else if (ev.event === 'error') {
             // 半路挂了：已经流出来的 token 不能当结论，但证据块照样有用
@@ -2330,7 +2641,7 @@ svg{width:100%;height:auto;display:block}
               el('p', { class: 'note', style: 'color:var(--warn)' },
                 `生成中断（${p.stage || 'unknown'}）：${p.message || ''}`),
               ...(acc.hits.length
-                ? [el('p', { class: 'note' }, `不过检索本身成功了：召回 ${acc.hits.length} 块原文，可以先用「只给证据」模式看。`)]
+                ? [el('p', { class: 'note' }, `检索本身已成功：召回 ${acc.hits.length} 段原文，可先使用「只给证据」模式查看。`)]
                 : []),
             );
             return;
@@ -2340,7 +2651,7 @@ svg{width:100%;height:auto;display:block}
 
       if (!acc.done) {
         body.append(el('p', { class: 'note', style: 'color:var(--warn);margin-top:10px' },
-          '连接在收到结束事件前就断了 —— 上面的结论不完整。'));
+          '连接在收到结束事件前中断 —— 上述结论不完整。'));
         return;
       }
       $('qa-chip').textContent = acc.stats.unsupported
@@ -2372,8 +2683,7 @@ svg{width:100%;height:auto;display:block}
     const sel = $('cmp-paper');
     if (!sel) return;
     const keep = sel.value;
-    sel.replaceChildren(...state.papers.map((p) => el('option', { value: p.id },
-      `${p.title.slice(0, 40)} · ${p.pages} 页`)));
+    sel.replaceChildren(...state.papers.map((p) => el('option', { value: p.id }, paperLabel(p))));
     const want = state.papers.some((p) => p.id === keep) ? keep
       : (state.paper && state.paper.id) || (state.papers[0] && state.papers[0].id) || '';
     if (want) sel.value = want;
@@ -2382,8 +2692,23 @@ svg{width:100%;height:auto;display:block}
   function fillCmpChunks() {
     const sel = $('cmp-chunk');
     if (!sel) return;
-    sel.replaceChildren(...CMP.chunks.map((c) => el('option', { value: String(c.index) },
-      `${c.section.split('›').pop().trim().slice(0, 34)} · p.${c.page_start}`)));
+    // 「节名 · 页」可能撞车：扫描件的 References 跨页，OCR 切出两块完全同名的。
+    // 下拉里两行一模一样，选了哪一块只能靠运气 —— 撞车的补上序号。
+    const labels = CMP.chunks.map((c) =>
+      `${c.section.split('›').pop().trim().slice(0, 34)} · p.${c.page_start}`);
+    const seen = new Map();
+    labels.forEach((l) => seen.set(l, (seen.get(l) || 0) + 1));
+    const nth = new Map();
+    sel.replaceChildren(...CMP.chunks.map((c, i) => {
+      const base = labels[i];
+      let text = base;
+      if (seen.get(base) > 1) {
+        const k = (nth.get(base) || 0) + 1;
+        nth.set(base, k);
+        text = `${base} · ${k}/${seen.get(base)}`;
+      }
+      return el('option', { value: String(c.index) }, text);
+    }));
     sel.value = String(CMP.idx);
   }
 
@@ -2394,7 +2719,7 @@ svg{width:100%;height:auto;display:block}
     const paras = splitParas(chunk.text);
     box.replaceChildren(...(paras.length
       ? paras.map((t) => el('p', {}, t))
-      : [el('p', { class: 'note' }, '这一块没有正文（可能是纯图表页）。')]));
+      : [el('p', { class: 'note' }, '该段无正文（可能为纯图表页）。')]));
   }
 
   function renderCompareZh() {
@@ -2408,7 +2733,7 @@ svg{width:100%;height:auto;display:block}
     if (!anyZh) {
       chip.hidden = true;
       box.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
-        '大模型暂时不可用，只显示原文。翻译不是必需品，断网也能对照阅读。'));
+        '大模型暂不可用，仅显示原文。断网环境下亦可对照阅读。'));
       return;
     }
     chip.hidden = false;
@@ -2416,10 +2741,10 @@ svg{width:100%;height:auto;display:block}
     const nodes = data.paragraphs.map((p) => (p.zh
       ? el('p', {}, p.zh)
       // 对不上的段落不编译文，留空并标出来
-      : el('p', { class: 'zh-empty' }, '（这段没有拿到译文）')));
+      : el('p', { class: 'zh-empty' }, '（本段未取得译文）')));
     if (data.degraded) {
       nodes.push(el('p', { class: 'note', style: 'margin:var(--sp-3) 0 0' },
-        '模型返回的段数与原文不符，只提交了对齐得上的部分。'));
+        '模型返回的段数与原文不符，仅提交对齐成功的部分。'));
     }
     box.replaceChildren(...nodes);   // replaceChildren 不会像 el() 那样跳过 null
   }
@@ -2498,7 +2823,7 @@ svg{width:100%;height:auto;display:block}
     CMP.idx = Number(e.target.value);
     CMP.data = null;
     renderCompareEn();
-    $('cmp-zh').replaceChildren(el('p', { class: 'note' }, '点「翻译这一段」，或等自动翻译。'));
+    $('cmp-zh').replaceChildren(el('p', { class: 'note' }, '点击「翻译这一段」，或等待自动翻译。'));
     translateChunk({ auto: true });
   });
   $('cmp-run')?.addEventListener('click', () => translateChunk());
@@ -2507,7 +2832,7 @@ svg{width:100%;height:auto;display:block}
   /** 进这个视图时才拉数据：没人看就不该花大模型的钱。 */
   function ensureCompare() {
     if (!state.papers.length) {
-      $('cmp-state').textContent = '库里还没有文献';
+      $('cmp-state').textContent = '库内暂无文献';
       return;
     }
     fillCmpPapers();
@@ -2584,7 +2909,7 @@ svg{width:100%;height:auto;display:block}
     const mergedNote = g.stats.merges ? ` · ${g.stats.merges} 个重复版本已并成一节` : '';
     $('graph-summary').textContent = g.stats.clusters
       ? `${g.stats.clusters} 篇论文 · 库内 ${g.stats.references_matched} 条引用 · 解析参考文献 ${g.stats.references_parsed} 条${mergedNote}`
-      : '库里还是空的 —— 先上传几篇 PDF';
+      : '文献库为空 —— 请先上传 PDF 文献';
 
     const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}` });
 
@@ -2733,7 +3058,7 @@ svg{width:100%;height:auto;display:block}
     box.replaceChildren();
     const papers = g.nodes.filter((n) => n.kind === 'paper');
     if (!papers.length) {
-      box.append(el('p', { class: 'note', style: 'margin:0' }, '库里还没有文献'));
+      box.append(el('p', { class: 'note', style: 'margin:0' }, '库内暂无文献'));
       return;
     }
     const max = Math.max(...papers.map((p) => p.rank), 1e-9);
@@ -2749,7 +3074,7 @@ svg{width:100%;height:auto;display:block}
       box.append(row);
     });
     // 为什么库外文献不进排名：说清楚，别让人以为是漏算
-    $('graph-rank-note').textContent = 'PageRank · 只算库内论文之间的引用；库外文献没有出边，算进来会整排霸榜';
+    $('graph-rank-note').textContent = 'PageRank · 仅统计库内论文之间的引用；库外文献无出边，计入后会使榜单失真';
   }
 
   /* 图谱解读是**规则**读出来的，不是让大模型编一段"领域综述"。
@@ -2761,9 +3086,9 @@ svg{width:100%;height:auto;display:block}
     const lib = g.edges.filter((e) => e.target.startsWith('paper:'));
     const lines = [];
     if (!papers.length) {
-      lines.push('库里还没有文献，先上传几篇 PDF。');
+      lines.push('库内暂无文献，请先上传 PDF。');
     } else if (!lib.length) {
-      lines.push('库里这几篇之间还没有认出来的引用关系：可能确实不相关，也可能是参考文献的写法没能认出（看下面的统计）。');
+      lines.push('库内论文之间尚未识别出引用关系：或确属不相关，或参考文献著录格式未能识别（详见下方统计）。');
     } else {
       const top = papers[0];
       lines.push(`库内 ${papers.length} 篇论文之间有 ${lib.length} 条引用，枢纽是《${shortLabel(top.label, 28)}》—— 被 ${top.cited_by} 篇引用（PageRank ${top.rank.toFixed(3)}）。`);
@@ -2888,8 +3213,8 @@ svg{width:100%;height:auto;display:block}
     $('cp-run').disabled = true;
     $('cp-out').replaceChildren(skeleton(4));
     $('cp-refs').replaceChildren(skeleton(2));
-    $('cp-state').textContent = (usedExample ? '框是空的，按示例 idea 跑：' : '')
-      + '检索库里原文 → 搭框架 → 核对引用…';
+    $('cp-state').textContent = (usedExample ? '输入框为空，改用示例构想：' : '')
+      + '检索库内原文 → 生成框架 → 核对引用…';
     try {
       const data = await api('/copilot/outline', {
         method: 'POST',
@@ -2901,7 +3226,7 @@ svg{width:100%;height:auto;display:block}
       $('cp-state').textContent = (data.degraded
         ? '大模型不可用：只列出检索到的原文'
         : `${data.outline.length} 个章节 · 引用 ${data.references.length} 条原文`)
-        + (usedExample ? ' · 用的是示例 idea' : '');
+        + (usedExample ? ' · 使用示例构想' : '');
     } catch (err) {
       CP.data = null;
       $('cp-state').textContent = '生成失败';
@@ -2921,7 +3246,7 @@ svg{width:100%;height:auto;display:block}
 
     if (!data.outline.length) {
       out.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
-        '这次没生成框架（大模型不可用）。右边仍然列出检索到的原文，可以自己先搭。'));
+        '本次未生成框架（大模型不可用）。右侧仍列出检索到的原文，可自行组织。'));
     } else {
       out.replaceChildren(...data.outline.map((sec) => el('div', { style: 'margin-bottom:16px' },
         el('h2', { style: 'font-size:var(--fs-md);margin:0 0 6px' }, sec.title),
@@ -2942,7 +3267,7 @@ svg{width:100%;height:auto;display:block}
     if (!data.references.length) {
       refsBox.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
         data.outline.length
-          ? '这次的要点一条都没挂上原文（模型没给证据编号）。这些论点火候未到，别直接写进论文。'
+          ? '本次要点均未关联原文（模型未返回证据编号）。这些论点尚不成熟，不宜直接写入论文。'
           : '库里没有检索到能引用的原文。'));
       return;
     }
@@ -3010,7 +3335,7 @@ svg{width:100%;height:auto;display:block}
 
   async function translateZh() {
     const text = $('tr-in').value.trim();
-    if (!text) { $('tr-state').textContent = '先贴一段中文'; return; }
+    if (!text) { $('tr-state').textContent = '请先输入中文内容'; return; }
     const btn = $('tr-run');
     btn.disabled = true;
     $('tr-state').textContent = '翻译中…';
@@ -3157,7 +3482,7 @@ svg{width:100%;height:auto;display:block}
     VIZ.rows = rows; VIZ.headers = headers;
     if (!rows.length) {
       $('viz-chart').replaceChildren(el('p', { class: 'note', style: 'margin:0' },
-        '没从文件里读到「类别, 数值」这样的两列。检查一下分隔符和表头。'));
+        '未能从文件中读取「类别, 数值」两列。请检查分隔符与表头。'));
       $('viz-caption').textContent = '';
       $('viz-export').disabled = true;
       return;
@@ -3338,10 +3663,10 @@ svg{width:100%;height:auto;display:block}
 
   async function runArxiv() {
     const q = $('arx-q').value.trim();
-    if (!q) { $('arx-state').textContent = '先写检索词'; return; }
+    if (!q) { $('arx-state').textContent = '请先输入检索词'; return; }
     const picked = pickedSources();
     // 全不选是允许的（"全部"再按一次就取消全选），但那样查不出东西，得说清楚
-    if (!picked.length) { $('arx-state').textContent = '先选来源：点「全部」或点上面对应的站'; return; }
+    if (!picked.length) { $('arx-state').textContent = '请先选择来源：点击「全部」或上方对应站点'; return; }
     if (ARX.busy) return;
     ARX.busy = true;
     $('arx-run').disabled = true;
@@ -3376,8 +3701,8 @@ svg{width:100%;height:auto;display:block}
     if (!data.hits.length) {
       out.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
         ok.length
-          ? '没有匹配的结果，换个更具体的检索词试试。'
-          : '这次没取到结果。检索词已收到，网络通了再点一次即可 —— 库里的文献不受影响。'));
+          ? '无匹配结果，请尝试更具体的检索词。'
+          : '本次未取得结果。网络恢复后再次检索即可 —— 库内文献不受影响。'));
       return;
     }
     // 降级信息单独一行：结果照常给，但不能假装"这就是全部"
@@ -3419,30 +3744,64 @@ svg{width:100%;height:auto;display:block}
       el('div', { class: 'act' }, ...actions));
   }
 
+  /* 入库要等下载，而下载很慢：arXiv 到这台服务器实测只有 20 KB/s 上下，
+     4.5 MB 的一篇要五分半。按钮一直写着「下载并解析…」等于在假装没卡住 ——
+     五分钟后用户早就以为页面死了。所以把秒数写到按钮上，过了 20 秒说清为什么慢。 */
+  const INGEST_SLOW_SECONDS = 20;
+
+  function ingestNote(text, kind = 'info') {
+    // 检索视图里就近再说一遍：showNote 写的 #upload-status 在文献库那一页，
+    // 用户停在检索页时根本看不见
+    $('arx-state').textContent = text;
+    showNote(text, kind);
+  }
+
   async function ingestArxiv(hit, btn) {
     const label = btn.textContent;
+    const started = Date.now();
     btn.disabled = true;
     btn.textContent = '下载并解析…';
+    // 用 >= 配合一个开关，别用 ===：标签页在后台时 Chrome 会把定时器压到
+    // 一分钟一次，秒数从 17 直接跳到 61，`=== 20` 那一帧永远等不到
+    let warned = false;
+    const tick = setInterval(() => {
+      const secs = Math.round((Date.now() - started) / 1000);
+      btn.textContent = `下载中 ${secs}s…`;
+      if (!warned && secs >= INGEST_SLOW_SECONDS) {
+        warned = true;
+        $('arx-state').textContent =
+          `arXiv 从本服务器下载速率约 20 KB/s，数 MB 的 PDF 需等待两三分钟；` +
+          `库内已有文献无需等待下载`;
+      }
+    }, 1000);
     try {
       const data = await api('/tools/arxiv/ingest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ arxiv_id: hit.arxiv_id }),
       });
-      btn.textContent = '已入库';
+      clearInterval(tick);
+      const secs = Math.max(1, Math.round((Date.now() - started) / 1000));
+      btn.textContent = `已入库 · ${secs}s`;
       // 库变了：列表、版本下拉、引用图谱缓存全都要重来
       state.papers = await api('/papers');
       GRAPH.data = null;
       renderLibrary();
       renderVersionPicker();
+      // 后端先查库再下载：这篇已经在库里时一个字节都不会下，得说清楚
+      if (data.already_present) {
+        ingestNote(`库里已经有《${data.paper.title}》（arXiv:${hit.arxiv_id}），本次未重复下载`);
+        return;
+      }
       const dup = data.duplicate_of
         ? `；库里已有同一篇的另一版本（${data.duplicate_of}），可在版本谱系里比`
         : '';
-      showNote(`已入库《${data.paper.title}》：${data.paper.pages} 页 · ${data.paper.chunks} 块${dup}`);
+      ingestNote(`已入库《${data.paper.title}》：${data.paper.pages} 页 · ${data.paper.chunks} 块${dup}`);
     } catch (err) {
+      clearInterval(tick);
       btn.disabled = false;
       btn.textContent = label;
-      showNote(`入库失败：${err.message}`, 'error');
+      ingestNote(`入库失败：${err.message}`, 'error');
     }
   }
 
@@ -3479,21 +3838,29 @@ svg{width:100%;height:auto;display:block}
   function renderRecommend(data) {
     const parts = [`${data.items.length} 篇`, `时间窗 ${data.days} 天`];
     parts.push(data.library_size ? `比对库里 ${data.library_size} 篇` : '文献库为空，暂按时间与开源情况排');
-    if (data.cached) parts.push('缓存（15 分钟内不重复出网）');
+    // 这次刷新失败但手里有旧批次时不能说"缓存"：用户要的是"这批是旧的"
+    if (data.degraded) parts.push('本次未获取到新论文');
+    else if (data.cached) parts.push('缓存（15 分钟内不重复出网）');
     $('rec-state').textContent = parts.join(' · ');
 
     const out = $('rec-out');
     if (data.degraded && !data.items.length) {
       out.replaceChildren(el('p', { class: 'note', style: 'margin:0;color:var(--warn)' },
-        `${data.note || 'arXiv 这次没返回数据'}。稍后再点「刷新」即可，库里的文献不受影响。`));
+        `${data.note || 'arXiv 本次未返回数据'}。稍后点击「刷新」即可，库内文献不受影响。`));
       return;
     }
     if (!data.items.length) {
       out.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
-        '这个时间窗里没有新提交，把天数调大一点再试。'));
+        '该时间窗内无新提交，请增大天数后重试。'));
       return;
     }
-    out.replaceChildren(...data.items.map(recRow));
+    const rows = data.items.map(recRow);
+    if (data.degraded && data.note) {
+      // 列表照常给，但必须说清"这批是旧的"—— 否则用户以为这就是最新的
+      rows.unshift(el('p', { class: 'note', style: 'margin:0 0 10px;color:var(--warn)' },
+        `${data.note}。这些仍为可用的候选论文，库内文献不受影响。`));
+    }
+    out.replaceChildren(...rows);
   }
 
   function recRow(r) {
@@ -3526,7 +3893,7 @@ svg{width:100%;height:auto;display:block}
       el('h4', {}, r.title),
       el('div', { class: 'meta' }, meta),
       el('p', { class: 'note', style: 'margin:6px 0;color:var(--ink-2)' },
-        `为什么推给你：${r.reason}`),
+        `推荐理由：${r.reason}`),
       el('div', { class: 'act' }, ...actions));
 
     // 两个投票按钮的点击要落在具体这一条上，所以在这里绑，不进循环外
@@ -3553,7 +3920,7 @@ svg{width:100%;height:auto;display:block}
       upBtn.setAttribute('aria-pressed', String(data.my_vote === 'up'));
       downBtn.setAttribute('aria-pressed', String(data.my_vote === 'down'));
     } catch (err) {
-      showNote(`投票没记上：${err.message}`, 'error');
+      showNote(`投票未能记录：${err.message}`, 'error');
     }
   }
 
@@ -3566,7 +3933,7 @@ svg{width:100%;height:auto;display:block}
 
   async function runReview() {
     const topic = $('rv-topic').value.trim();
-    if (!topic) { $('rv-state').textContent = '先写一个主题'; return; }
+    if (!topic) { $('rv-state').textContent = '请先输入综述主题'; return; }
     if (RV.busy) return;
     RV.busy = true;
     $('rv-run').disabled = true;
@@ -3603,11 +3970,24 @@ svg{width:100%;height:auto;display:block}
     if (!data) return;
 
     const out = $('rv-out');
+    // 同一篇的两个版本在库里各占一条，直接列标题就成了
+    // 「《Attention Is All You Need》、《Attention Is All You Need》」——
+    // 看着像列表重复了。按标题归并，多版本在后面说一句。
+    const groups = new Map();
+    for (const p of data.papers) {
+      const key = normTitle(p.title);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(p);
+    }
+    const listed = [...groups.values()].map((g) => {
+      const t = `《${shortLabel(g[0].title, 26)}》`;
+      return g.length > 1 ? `${t}（${g.length} 个版本）` : t;
+    });
     const head = el('p', { class: 'note', style: 'margin:0 0 12px' },
-      `本次用到 ${data.papers.length} 篇：${data.papers.map((p) => `《${shortLabel(p.title, 26)}》`).join('、')}`);
+      `本次用到 ${groups.size} 篇：${listed.join('、')}`);
     if (!data.sections.length) {
       out.replaceChildren(head, el('p', { class: 'note', style: 'margin:0' },
-        '这次没写出综述（大模型不可用）。右边的原文照样列出来了，可以自己先组织。'));
+        '本次未生成综述（大模型不可用）。右侧原文仍已列出，可自行组织。'));
     } else {
       out.replaceChildren(head, ...data.sections.map((sec) => el('div',
         { style: 'margin-bottom:16px' },
@@ -3622,6 +4002,13 @@ svg{width:100%;height:auto;display:block}
           }, `[${n}]`)))))));
     }
 
+    // 同一篇常同时存在 v1 扫描件和 v7 电子版，光写标题 + 页码，读者没法判断
+    // 这段引文到底出自哪一版 —— 扫描件的 OCR 错字和电子版的原文长得不一样。
+    const refVersion = (r) => [
+      r.version ? `v${r.version}` : '',
+      r.scanned ? '扫描件' : '',
+    ].filter(Boolean).join(' · ');
+
     const refsBox = $('rv-refs');
     refsBox.replaceChildren(...(data.references.length
       ? data.references.map((r) => el('div', {
@@ -3629,10 +4016,10 @@ svg{width:100%;height:auto;display:block}
         on: { click: () => jumpToPaper(r.paper_id, r.page) },
       },
       el('span', { class: 'k' }, `[${r.n}]`),
-      el('span', {}, `${r.title} · p.${r.page}`),
+      el('span', {}, `${r.title}${refVersion(r) ? ` ${refVersion(r)}` : ''} · p.${r.page}`),
       el('span', { class: 'raw', style: 'display:block;margin-top:4px' }, `“${r.quote}”`),
       el('span', { style: 'display:block;margin-top:6px;color:var(--s1)' }, '打开原文 →')))
-      : [el('p', { class: 'note', style: 'margin:0' }, '这次没检索到可用原文。')]));
+      : [el('p', { class: 'note', style: 'margin:0' }, '本次未检索到可用原文。')]));
 
     const futBox = $('rv-future');
     futBox.replaceChildren(...(data.future.length
@@ -3645,13 +4032,13 @@ svg{width:100%;height:auto;display:block}
           }, `[${n}]`))),
         el('div', { style: 'font-size:var(--fs-sm);line-height:1.6' }, f.idea),
         f.why ? el('div', { class: 'note', style: 'margin-top:2px' }, `依据：${f.why}`) : ''))
-      : [el('p', { class: 'note', style: 'margin:0' }, '没有提炼出未来方向（这次没拿到 Future Work 段落）。')]));
+      : [el('p', { class: 'note', style: 'margin:0' }, '未提炼出未来方向（本次未取得 Future Work 段落）。')]));
   }
 
   /** 综述里点 [n]：把右栏对应那条原文滚到眼前并闪一下。 */
   function flashRef(boxId, n) {
     const row = $(boxId).querySelector(`[data-n="${n}"]`);
-    if (!row) { showNote(`本次引用里没有第 ${n} 条`); return; }
+    if (!row) { showNote(`本次引用中不含第 ${n} 条`); return; }
     flash(row);
   }
 
@@ -3673,6 +4060,7 @@ svg{width:100%;height:auto;display:block}
     find_main_papers: '基石论文',
     list_papers: '列出文献库',
     scan_pdf: '扫描件诊断',
+    find_tables: '读表格',
   };
 
   async function loadAgentTools() {
@@ -3703,7 +4091,7 @@ svg{width:100%;height:auto;display:block}
   function renderPlan(steps, notes) {
     const box = $('ag-plan-out');
     if (!steps || !steps.length) {
-      box.replaceChildren(el('p', { class: 'note', style: 'margin:0' }, '这次没有产出计划。'));
+      box.replaceChildren(el('p', { class: 'note', style: 'margin:0' }, '本次未产出计划。'));
       return;
     }
     box.replaceChildren(
@@ -3725,7 +4113,7 @@ svg{width:100%;height:auto;display:block}
   function renderTrace(trace) {
     const box = $('ag-trace');
     if (!trace || !trace.length) {
-      box.replaceChildren(el('p', { class: 'note', style: 'margin:0' }, '这次只做了规划，没有执行。'));
+      box.replaceChildren(el('p', { class: 'note', style: 'margin:0' }, '本次仅执行了规划，未调用工具。'));
       return;
     }
     box.replaceChildren(el('div', { class: 'trace' }, ...trace.map((t) => el('div',
@@ -3744,8 +4132,8 @@ svg{width:100%;height:auto;display:block}
     if (!out.answer) {
       parts.push(el('p', { class: 'note', style: 'margin:0' },
         out.degraded
-          ? '大模型这次不可用：计划与执行都退成了规则版，下面只有工具观测，没有生成结论。'
-          : '这次没有给出结论。'));
+          ? '大模型本次不可用：计划与执行均退化为规则版，下方仅有工具观测，未生成结论。'
+          : '本次未给出结论。'));
     } else {
       parts.push(el('p', { style: 'margin:0 0 12px;font-size:var(--fs-sm);line-height:1.7;white-space:pre-wrap' },
         out.answer));
@@ -3766,7 +4154,7 @@ svg{width:100%;height:auto;display:block}
       el('span', {}, `${e.title} · p.${e.page} · #${e.chunk_index}`),
       el('span', { class: 'raw', style: 'display:block;margin-top:4px' }, `“${e.quote}”`)))
       : [el('p', { class: 'note', style: 'margin:0' },
-        '这次的结论没有挂上原文块 —— 结论可能来自图谱统计或元信息，不需要引用正文。')]));
+        '本次结论未关联原文段落 —— 可能来自图谱统计或元信息，无需引用正文。')]));
   }
 
   async function runAgent(mode) {
@@ -3776,7 +4164,7 @@ svg{width:100%;height:auto;display:block}
     AG.busy = true;
     $('ag-plan').disabled = true;
     $('ag-run').disabled = true;
-    $('ag-state').textContent = mode === 'run' ? '正在规划并执行…（要调几次工具，慢一些）' : '正在规划…';
+    $('ag-state').textContent = mode === 'run' ? '正在规划并执行…（需多次调用工具，耗时较长）' : '正在规划…';
     try {
       const out = mode === 'run'
         ? await api('/agent/run', {
@@ -3798,7 +4186,7 @@ svg{width:100%;height:auto;display:block}
       } else {
         renderTrace(null);
         $('ag-answer').replaceChildren(el('p', { class: 'note', style: 'margin:0' },
-          '只规划不执行 —— 点「规划并执行」才会真的调工具。'));
+          '仅规划、不执行 —— 点击「规划并执行」才会实际调用工具。'));
         $('ag-evidence').replaceChildren();
       }
       $('ag-state').textContent = out.degraded ? '完成（大模型不可用，已降级）' : '完成';
@@ -3815,8 +4203,9 @@ svg{width:100%;height:auto;display:block}
 
   // ---------------------------------------------------------------- 绑定
 
-  $('tab-qa')?.addEventListener('click', () => setRefTab('qa'));
-  $('tab-refs')?.addEventListener('click', () => setRefTab('refs'));
+  $('tab-qa')?.addEventListener('click', () => setSideTab('qa'));
+  $('tab-refs')?.addEventListener('click', () => setSideTab('refs'));
+  $('tab-visual')?.addEventListener('click', () => setSideTab('visual'));
 
   /* ---------------------------------------------------------- 中英联动滚动
 
@@ -3911,7 +4300,7 @@ svg{width:100%;height:auto;display:block}
       await navigator.clipboard.writeText(text);
       $('tr-state').textContent = '已复制译文';
     } catch {
-      $('tr-state').textContent = '浏览器拒绝了剪贴板写入，手动选一下吧';
+      $('tr-state').textContent = '浏览器拒绝写入剪贴板，请手动选择复制';
     }
   });
 

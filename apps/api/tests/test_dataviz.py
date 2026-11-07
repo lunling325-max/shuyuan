@@ -642,9 +642,16 @@ def test_matplotlib_script_is_syntactically_valid_and_self_contained(client, tmp
 # ============================================================ ⑧ 错误码
 
 
-def test_empty_csv_returns_422(client, tmp_path):
+def test_empty_csv_returns_400(client, tmp_path):
+    """空文件是 400，不是 422。
+
+    这条和它的兄弟要一致：二进制文件头、非 UTF-8、列数不齐都是 400 ——
+    共同点是"你上传的东西根本不成其为 CSV"。422 留给"是合法 CSV，但做不了图"
+    （比如只有表头、没有数值列）。同一类错误给出两种状态码，前端按码分流时就得写两遍。
+    """
     response = _upload(client, tmp_path, b"")
-    assert response.status_code == 422
+    assert response.status_code == 400
+    assert "空" in response.json()["detail"]
 
 
 def test_no_numeric_column_returns_422(client, tmp_path):

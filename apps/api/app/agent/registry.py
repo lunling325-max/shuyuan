@@ -116,7 +116,7 @@ class ToolContext:
         try:
             return self._by_id[paper_id]
         except KeyError as exc:
-            raise ValueError(f"库里没有这篇文献：{paper_id}") from exc
+            raise ValueError(f"库内不存在该文献：{paper_id}") from exc
 
     def graph(self):
         """整个运行只建一次图。建图要解析每篇的参考文献，重复调用很贵。"""
@@ -179,6 +179,15 @@ class ListPapersArgs(_StrictArgs):
 
 class ScanPdfArgs(_StrictArgs):
     paper_id: str = Field(min_length=1, max_length=200, description="文献 id")
+
+
+class FindTablesArgs(_StrictArgs):
+    paper_id: str = Field(min_length=1, max_length=200, description="文献 id")
+    keyword: str = Field(
+        default="",
+        max_length=100,
+        description="可选：只保留含这个词的行（模型名、指标名、数据集名）；留空则列出全部表格",
+    )
 
 
 class ToolRegistry:
@@ -459,17 +468,22 @@ def _compare_versions(ctx: ToolContext, args: CompareVersionsArgs) -> ToolOutcom
     if paper_a.id == paper_b.id:
         raise ValueError("两份是同一个文件，没什么可比的")
 
-    # 谁新谁旧按 PDF 生成日期判，和 /api/papers/{id}/compare 保持一致
-    old, new = (
-        (paper_a, paper_b)
-        if (paper_a.created_at or paper_a.uploaded_at)
-        <= (paper_b.created_at or paper_b.uploaded_at)
-        else (paper_b, paper_a)
-    )
+    # 谁新谁旧和 HTTP 接口共用同一份判断（arXiv 版本号 → 生成日期 → 上传时间）。
+    # 以前这里自己写了一遍"只看日期"，扫描件在这条路上会被判成更新的那一版。
+    # 局部 import：工具层不在模块加载时绑定具体注册表实现（见文件头的 TYPE_CHECKING）。
+    from app.api.registry import order_versions
+
+    old, new, order_by = order_versions(paper_a, paper_b)
     relation = _relation(old, new)
     diff = diff_versions(old.path, new.path)
+    ocr_side = (
+        "both" if old.scanned and new.scanned
+        else "old" if old.scanned
+        else "new" if new.scanned
+        else ""
+    )
     summary = (
-        summarize_diff(diff, llm_call=ctx.llm_call)
+        summarize_diff(diff, llm_call=ctx.llm_call, ocr_side=ocr_side)
         if args.summarize
         else DiffSummary(items=[], ok=True)
     )
@@ -483,11 +497,17 @@ def _compare_versions(ctx: ToolContext, args: CompareVersionsArgs) -> ToolOutcom
         "summary": summary.items,
         "summary_ok": summary.ok,
         "summary_note": summary.reason,
+        "order_by": order_by,
+        "ocr_side": ocr_side,
     }
     lines = [
         f"《{new.title}》 vs 《{old.title}》：relation={relation.kind}，"
         f"差异 {len(diff.changes)} 处（{diff.stats}）。"
     ]
+    if order_by == "uploaded_at":
+        lines.append("注意：两版的 arXiv 版本号与生成日期都取不到，新旧是按上传时间排的，不代表论文本身的先后。")
+    if ocr_side:
+        lines.append("注意：其中一侧是扫描件，逐字差异里混着 OCR 识别误差。")
     if summary.items:
         lines.append("摘要：" + "；".join(item["what"] for item in summary.items[:6]))
     elif not summary.ok:
@@ -620,6 +640,83 @@ def _scan_pdf(ctx: ToolContext, args: ScanPdfArgs) -> ToolOutcome:
     return ToolOutcome(ok=True, summary=summary, data=data)
 
 
+MAX_TABLE_TOOL_ROWS = 40
+MAX_TABLE_TOOL_TABLES = 5
+
+
+def _row_line(row) -> str:
+    """格内换行（booktabs 表体挤在一格）在一行摘要里用 ` / ` 顶掉。"""
+    return " | ".join(cell.replace("\n", " / ") for cell in row)
+
+
+def _find_tables(ctx: ToolContext, args: FindTablesArgs) -> ToolOutcome:
+    """读一篇论文里**行×列还原过**的表格。
+
+    这一步的意义不在"多一个工具"：切块器读到的表格是被拆散的行 ——
+    `BLEU` 在表头、`41.8` 在第七行，两者之间没有任何关系。这里给的是
+    还原后的格子，数字和列名在同一行里，模型不用猜。
+    扫描件提不出来（没有文字层），`report.note` 里会写明原因，不编。
+    """
+    paper = ctx.paper(args.paper_id)
+    report = paper.visuals
+    needle = args.keyword.strip().lower()
+
+    picked: list[tuple[object, list]] = []
+    for table in report.tables:
+        if needle:
+            body = [row for row in table.rows if any(needle in cell.lower() for cell in row)]
+            if not body:
+                continue
+            # 表头必须跟着一起给：只给 `GPT-3 175B | 175.0B | 96`，谁也看不出 96 是层数
+            header = tuple(table.rows[:1])
+            picked.append((table, list(header) + [row for row in body if row not in header]))
+        else:
+            picked.append((table, list(table.rows)))
+
+    total = len(report.tables)
+    if not picked:
+        scope = f"关键词「{args.keyword}」没有匹配到" if needle else "没有可提取的"
+        return ToolOutcome(
+            ok=True,
+            summary=f"《{paper.title}》{scope}表格。{report.note}",
+            data={"tables": [], "count": total, "matched": 0, "note": report.note},
+        )
+
+    lines = [f"《{paper.title}》共 {total} 张表格，命中 {len(picked)} 张（已按行×列还原）。"]
+    budget = MAX_TABLE_TOOL_ROWS
+    for index, (table, rows) in enumerate(picked[:MAX_TABLE_TOOL_TABLES]):
+        head = f"- {table.label or '（无表题）'} · p.{table.page} · {table.n_rows}×{table.n_cols}"
+        if table.caption:
+            head += f" · {truncate(table.caption, 80)}"
+        lines.append(head)
+        for row in rows[:budget]:
+            lines.append("  " + _row_line(row))
+        if len(rows) > budget:
+            lines.append(f"  …另有 {len(rows) - budget} 行")
+        budget = max(0, budget - len(rows))
+        if budget == 0:
+            remaining = len(picked[:MAX_TABLE_TOOL_TABLES]) - index - 1
+            if remaining:
+                lines.append(f"（限于篇幅，另有 {remaining} 张表格未列出）")
+            break
+
+    data = {
+        "tables": [
+            {
+                "label": table.label,
+                "page": table.page,
+                "caption": table.caption,
+                "rows": [list(row) for row in rows],
+            }
+            for table, rows in picked[:MAX_TABLE_TOOL_TABLES]
+        ],
+        "count": total,
+        "matched": len(picked),
+        "note": report.note,
+    }
+    return ToolOutcome(ok=True, summary="\n".join(lines), data=data)
+
+
 # ---------------------------------------------------------------- 装配
 
 
@@ -700,6 +797,17 @@ def build_tool_registry() -> ToolRegistry:
             description="诊断一篇 PDF 的文字层状况：哪些页是扫描件、本机能否 OCR。",
             args_model=ScanPdfArgs,
             handler=_scan_pdf,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="find_tables",
+            description=(
+                "读一篇论文里的表格（行×列还原过的单元格，不是被切块器拆散的行），"
+                "可按关键词筛行并带上表头；首次解析较慢，扫描件没有文字层会如实说明。"
+            ),
+            args_model=FindTablesArgs,
+            handler=_find_tables,
         )
     )
     return registry

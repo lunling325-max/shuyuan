@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  溯源 · 科研助手 — 组合标（图标 + 文字），给 PPT 封面、演示视频片头用。
+
+  字重 650 在 SVG 里没有对应关键字（CSS 有，SVG 属性只认 normal/bold），
+  所以这里用 font-weight="700"；要更细就用 CSS 引用本文件。
+  字体按 苹方 → 微软雅黑 → 思源黑体 → 系统黑体 的顺序回落：
+  这三类覆盖了 macOS / Windows / Linux 的默认中文黑体，换机器不会掉成宋体。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 80" width="660" height="160" role="img" aria-label="溯源 · 科研助手">
+  <title>溯源 · 科研助手</title>
+
+  <g transform="translate(8 8)">
+    <rect width="64" height="64" rx="16" fill="#2a78d6"/>
+    <circle cx="27.6" cy="27.6" r="12.2" fill="none" stroke="#fff" stroke-width="5.2"/>
+    <path d="M37 37L46 46" stroke="#fff" stroke-width="5.8" stroke-linecap="round"/>
+    <path d="M21.8 25.2H33.4" stroke="#fff" stroke-width="3.4" stroke-linecap="round" opacity=".9"/>
+    <path d="M21.8 31.2H29.4" stroke="#fff" stroke-width="3.4" stroke-linecap="round" opacity=".55"/>
+  </g>
+
+  <text x="88" y="42" fill="#16202c"
+        font-family="PingFang SC, Microsoft YaHei, Source Han Sans SC, Noto Sans SC, system-ui, sans-serif"
+        font-size="28" font-weight="700" letter-spacing="1">溯源 · 科研助手</text>
+
+  <text x="89" y="64" fill="#68717d"
+        font-family="PingFang SC, Microsoft YaHei, Source Han Sans SC, Noto Sans SC, system-ui, sans-serif"
+        font-size="12.5" letter-spacing=".6">每句话都能点回原文的页码与坐标</text>
+</svg>

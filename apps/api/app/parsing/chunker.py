@@ -31,7 +31,7 @@ TARGET_TOKENS = 350
 MAX_TOKENS = 700
 MIN_TOKENS = 60
 
-_NUMBERED_HEADING = re.compile(r"^(\d+(?:\.\d+){0,4})\.?\s+(\S.*)$")
+_NUMBERED_HEADING = re.compile(r"^(\d+(?:\.\d+){0,4})\.?\s*(\S.*)$")
 _UPPER_HEADING = re.compile(r"^[A-Z][A-Z0-9 &\-:,]{3,40}$")
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(])")
 # arXiv 左侧那行旋转的投稿戳："arXiv:1706.03762v1  [cs.CL]  12 Jun 2017"。
@@ -70,6 +70,9 @@ class Para:
     text: str
     size: float
     bold: bool
+    # `size` 是不是代理值（OCR 块的像素墨迹高度）。字号判标题那条规则在它上面失效，
+    # 原因见 `_heading`。
+    size_proxy: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +129,15 @@ def _block_style(block: dict) -> tuple[float, bool]:
     return size, bold_chars >= total * 0.6
 
 
+def _size_is_proxy(block: dict) -> bool:
+    """这个块的 `size` 是代理值吗（OCR 拼出来的块，字号来自像素墨迹高度）。"""
+    for line in block.get("lines", []):
+        for span in line.get("spans", []):
+            if span.get("text", "").strip():
+                return span.get("font") == "ocr"
+    return False
+
+
 def _boiler_key(text: str) -> str:
     """页眉页脚的比对键：**只**把页码去掉，其余原样。
 
@@ -159,6 +171,16 @@ def _repeats_within(pages: list[int], count: int = 3, window: int = 8) -> bool:
     return False
 
 
+def page_needs_ocr(blocks: list[dict]) -> bool:
+    """这一页的文字层是不是不够用（不够就该走 OCR）。
+
+    对外公开：`references._page_blocks` 也要做同一个判断，否则扫描件的
+    参考文献会去读一份空的文字层 —— 切块器认得 `References` 标题，
+    参考文献解析却在原文页面上什么也读不到，整份扫描件照样 0 条引文。
+    """
+    return _page_chars(blocks) < _OCR_MIN_CHARS
+
+
 def _page_chars(blocks: list[dict]) -> int:
     """一页文字层的有效字符数（只算文本块里的 span，空白不算）。
 
@@ -182,9 +204,9 @@ def extract_paras(pdf_path: str, *, ocr=None) -> tuple[list[Para], int]:
     """抽出所有自然段，并剔除页眉页脚。返回 (段落列表, 总页数)。
 
     `ocr` 是可选钩子：`(page) -> dict | None`，只在某页文字层几乎为空时调用。
-    为什么不在这里直接绑定 Tesseract：切块器是纯解析逻辑，不该知道自己跑在
-    装了 OCR 的机器还是没装的机器上；而且测试能注入假钩子，不必为了跑用例
-    去装一个几 MB 的外部程序。
+    为什么不在这里直接绑定某个 OCR 引擎（RapidOCR / Tesseract）：切块器是纯解析逻辑，
+    不该知道自己跑在装了 OCR 的机器还是没装的机器上；而且测试能注入假钩子，
+    不必为了跑用例去加载一份模型权重。
     """
     doc = pymupdf.open(pdf_path)
     per_page: list[list[tuple[Para, bool]]] = []  # bool: 是否页边区域
@@ -193,7 +215,7 @@ def extract_paras(pdf_path: str, *, ocr=None) -> tuple[list[Para], int]:
         height = page.rect.height or 1.0
         items = []
         blocks = page.get_text("dict")["blocks"]
-        if ocr is not None and _page_chars(blocks) < _OCR_MIN_CHARS:
+        if ocr is not None and page_needs_ocr(blocks):
             # 扫描页：文字层是空的，但版面还在。让 OCR 把那页"读"成带 bbox 的
             # blocks，后续的标题识别、页眉剔除、坐标高亮就能原样复用。
             ocr_blocks = ocr(page)
@@ -211,7 +233,14 @@ def extract_paras(pdf_path: str, *, ocr=None) -> tuple[list[Para], int]:
                 continue
             x0, y0, x1, y1 = block["bbox"]
             size, bold = _block_style(block)
-            para = Para(page=page_no, bbox=(x0, y0, x1, y1), text=text, size=size, bold=bold)
+            para = Para(
+                page=page_no,
+                bbox=(x0, y0, x1, y1),
+                text=text,
+                size=size,
+                bold=bold,
+                size_proxy=_size_is_proxy(block),
+            )
             # 页边带放宽到 16% / 90%：教材的页眉在页面 14.9% 处，7.5% 的窄带根本够不着，
             # 于是整本书的页眉没被剔掉，每页还把章节栈打回顶层。
             # 放宽不会误伤正文 —— 正文句子不会在连续多页里一字不差地重复。
@@ -302,12 +331,35 @@ def _heading(para: Para, body_size: float) -> tuple[int, str] | None:
     # 剥完要重新过一次编号判据 —— 不成立就说明原本也不是标题。
     body = _TRAILING_PAGE.sub("", _PAGE_PREFIX.sub("", text)).strip()
     m = _NUMBERED_HEADING.match(body)
-    if m and len(m.group(2)) > 2 and not body.endswith(".") and _plausible_heading(m.group(2)):
-        return m.group(1).count(".") + 1, body
+    if m and len(m.group(2)) > 2 and not body.endswith("."):
+        head, tail = m.group(1), m.group(2)
+        # 编号和标题之间**一个空白都没有**才算粘连。判据是"分隔段里有没有空白字符"，
+        # 不是"分隔段 strip 之后是不是空" —— 后者会把正常的单个空格也判成粘连。
+        glued = not re.search(r"\s", body[len(head) : len(body) - len(tail)])
+        # 扫描件（`size_proxy`）要放宽两处，都是 OCR 自己的毛病：
+        #   ① 编号和标题粘成一个词 —— `1Introduction`、`3.2Attention`、`7Conclusion`；
+        #   ② 标题和下一段正文并成一块 —— `3.1 Encoder and Decoder Stacks Encoder:
+        #      The encoder is composed of a stack…`。
+        # 所以代字号块的硬约束就是"尾巴短"：≤6 词才可能是标题，再长就是正文。
+        # 文字层的 PDF 照旧走原判据（必须有分隔空白），一个字都不放宽。
+        if para.size_proxy:
+            # 代字号的块还要求首字母大写（汉字同理）：`11 ion@google.com`
+            # 是首页的作者单位碎片，字母占比 0.86、词数 1，光看前面两条必中。
+            ok = len(tail.split()) <= 6 and (tail[0].isupper() or "一" <= tail[0] <= "鿿")
+        else:
+            ok = not glued
+        if ok and _plausible_heading(tail):
+            return head.count(".") + 1, (f"{head} {tail}" if glued else body)
 
-    # 字号显著大于正文，且不是以句末标点结尾（排除首句）
+    # 字号显著大于正文，且不是以句末标点结尾（排除首句）。
+    # 扫描件（`size_proxy`）走不了这条：OCR 的"字号"是一行的像素墨迹高度，
+    # 实测同一份论文正文 13~19pt、真标题 13~20pt —— 两个区间几乎完全重叠。
+    # 拿 1.12 倍去判等于按噪声挑标题：15 页扫描件里既漏掉大半真标题，
+    # 又把参考文献里的条目行（`[13] Zhongqiang Huang and Mary Harper...`）
+    # 判成标题，整个 References 节被切成七八段。
     if (
-        para.size >= body_size * 1.12
+        not para.size_proxy
+        and para.size >= body_size * 1.12
         and not text.endswith((".", "?", "!"))
         and _plausible_heading(text)
     ):

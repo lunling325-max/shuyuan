@@ -47,7 +47,7 @@ def _trim(text: str, n: int = MAX_BODY_CHARS) -> str:
     return flat if len(flat) <= n else flat[:n] + "…"
 
 
-def build_prompt(diff: VersionDiff, *, max_items: int = 24) -> str:
+def build_prompt(diff: VersionDiff, *, max_items: int = 24, ocr_side: str = "") -> str:
     """只把值得看的改动挑出来 —— 喂噪声进去，出来的一定是废话。"""
     substantive = [c for c in diff.changes if not c.is_reference_churn]
     # 先排掉"纯图表题注"这类，再按页序取前若干条
@@ -55,8 +55,17 @@ def build_prompt(diff: VersionDiff, *, max_items: int = 24) -> str:
 
     lines = [
         f"共 {len(diff.changes)} 处文本差异，其中 {len(substantive)} 处不在参考文献里。",
-        "下面是代表性的改动（旧版 → 新版）：",
     ]
+    if ocr_side:
+        # 扫描件那一侧的正文是 OCR 认出来的，逐字差异里混着大量识别误差。
+        # 不预先说明，模型会把 "the models" → "the mode1s" 当成作者改笔。
+        which = {"old": "旧版", "new": "新版", "both": "两版"}.get(ocr_side, "其中一版")
+        lines.append(
+            f"**注意**：{which}是扫描件，文字由 OCR 识别而来。识别误差"
+            "（字母误认如 l/1、0/O，断词，标点与空格）**不是**作者的修改，一律忽略；"
+            "只总结意思层面确实变了的地方。"
+        )
+    lines.append("下面是代表性的改动（旧版 → 新版）：")
     for i, c in enumerate(ranked, start=1):
         lines.append(f"\n[{i}] kind={c.kind} section={c.section or '（未标注）'}")
         for s in c.old[:2]:
@@ -66,7 +75,9 @@ def build_prompt(diff: VersionDiff, *, max_items: int = 24) -> str:
     return "\n".join(lines)
 
 
-def summarize_diff(diff: VersionDiff, *, llm_call=None, max_items: int = 24) -> DiffSummary:
+def summarize_diff(
+    diff: VersionDiff, *, llm_call=None, max_items: int = 24, ocr_side: str = ""
+) -> DiffSummary:
     if not diff.changes:
         return DiffSummary(items=[], ok=True, reason="两版正文没有可识别的差异")
 
@@ -74,7 +85,9 @@ def summarize_diff(diff: VersionDiff, *, llm_call=None, max_items: int = 24) -> 
         from app.llm.client import chat_json as llm_call
 
     try:
-        raw = llm_call(build_prompt(diff, max_items=max_items), system=SYSTEM_PROMPT)
+        raw = llm_call(
+            build_prompt(diff, max_items=max_items, ocr_side=ocr_side), system=SYSTEM_PROMPT
+        )
     except Exception as exc:  # noqa: BLE001 —— 摘要失败不该让版本对比整个不可用
         return DiffSummary(items=[], ok=False, reason=str(exc)[:200])
 

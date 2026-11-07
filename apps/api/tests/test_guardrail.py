@@ -49,6 +49,21 @@ def test_exact_quote_hits_with_bbox(indexes):
     assert x1 > x0 and y1 > y0
 
 
+def test_anchor_source_text_does_not_repeat_compound_words(indexes):
+    """回显的"原文"必须真的是原文。
+
+    "intra-attention" 被切成 intra/attention 两个 token，两个 token 都存着整串
+    raw，直接 join 会读成 "intra-attention intra-attention is …" —— 实测
+    /api/papers/{id}/qa 返回的证据里全是这种重复，看起来像抽取坏了。
+    """
+    anchor = indexes["v7"].find(
+        "intra-attention is an attention mechanism relating different positions of a single sequence"
+    )
+    assert anchor is not None and anchor.exact is True
+    assert anchor.source_text.count("intra-attention") == 1
+    assert anchor.source_text.startswith("intra-attention is an attention mechanism")
+
+
 def test_ligature_pdf_matches(indexes):
     """v1 的 PDF 把 fi 存成连字 ﬁ（conﬁguration），归一化后仍应命中。"""
     claim = Claim(
@@ -161,3 +176,18 @@ def test_subtly_altered_quote_never_passes_as_supported(indexes):
     )
     [r] = verify_claims([claim], indexes)
     assert r.status != "supported"
+
+
+def test_fuzzy_similarity_is_never_printed_as_a_decimal_that_reads_like_pass():
+    """「仅模糊命中」旁边的相似度不能印成 1.00。
+
+    实测里出现过 reason=「仅模糊命中（最低相似度 1.00），原文需人工确认」——
+    两位小数把 0.9996 四舍五入成了 1.00，用户只会看到「相似度 1.00」，
+    以为这条被认可了。宁可多印两位，也不能让文字和判定打架。
+    """
+    from app.guardrails.citation import _format_similarity
+
+    assert _format_similarity(0.9996) == "0.9996"
+    assert _format_similarity(0.87) == "0.87"
+    assert _format_similarity(1.0) == "1"
+    assert _format_similarity(0.0) == "0"

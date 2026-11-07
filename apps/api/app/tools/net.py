@@ -32,6 +32,7 @@ import ssl
 import threading
 import time
 import urllib.request
+import zlib
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 
@@ -143,7 +144,13 @@ def _get(
         raise ConnectFailed(str(exc) or type(exc).__name__) from exc
 
     with response:
-        data = response.read((max_bytes + 1) if max_bytes is not None else -1)
+        # 有上限才传 amt。**绝不能写 `read(-1)`**：http.client 只在 amt is None 时
+        # 走"读完整个 chunked 流"的正规路径；amt=-1 会命中 `amt <= chunk_left` 分支，
+        # 先读完整第一个 chunk，再用 `_safe_read(-1)` 把剩余裸字节（含 chunk 长度行、
+        # CRLF）一起吞进来 —— 结果是体里插进了分块框架，gzip 解压必然报
+        # `Error -3 while decompressing data`。OpenAlex、Zenodo 都用 chunked 且不发
+        # Content-Length，于是只有它们两个坏；Crossref 有 Content-Length，一直正常（E-021）。
+        data = response.read() if max_bytes is None else response.read(max_bytes + 1)
         declared = response.headers.get("Content-Length")
         if declared is not None and declared.isdigit() and len(data) < int(declared):
             raise OSError(f"下载被截断：只收到 {len(data)}/{declared} 字节")
@@ -151,7 +158,8 @@ def _get(
     if encoding == "gzip":
         try:
             data = _gunzip(data, max_bytes)
-        except (OSError, EOFError) as exc:
+        except (OSError, EOFError, zlib.error) as exc:
+            # zlib.error 不是 OSError，不显式接住就会以 zlib 的原文冒到界面上
             raise OSError(f"gzip 解压失败：{exc}") from exc
     return data
 

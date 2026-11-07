@@ -28,7 +28,9 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Sequence
 
+from app.rag.evidence import body_chunks, is_reference_list
 from app.rag.query import expand_query
+from app.rag.works import one_version_per_work
 
 if TYPE_CHECKING:  # 只为类型标注，rag 层运行时不要反向依赖 HTTP 层
     from app.api.registry import Paper
@@ -61,8 +63,6 @@ GAP_MARKERS = ("研究空白", "研究缺口", "research gap")
 # 参考文献列表能引用，但当证据毫无意义：它是一串引文，说明不了任何论点。
 # 实测出现过 GPT-4 报告的 References 块被选作证据，前端引用栏里显示的是
 # "[23] Xi Chen, Xiao Wang, ..." —— 技术上确实是原文，但不该出现在综述里。
-REF_LIST_MARKERS = ("references", "bibliography", "参考文献", "reference list")
-
 SYSTEM_PROMPT = """你是严谨的科研综述助手。铁律：
 
 1. 只依据给定的编号证据块归纳章节要点；证据不足的要点照常写，但 evidence 必须是空数组 []。
@@ -85,6 +85,8 @@ class Evidence:
     page: int
     section: str
     text: str
+    version: int = 0  # arXiv 的 vN；0 = 取不到
+    scanned: bool = False  # 这一版是扫描件（正文由 OCR 认出来）
 
     @property
     def quote(self) -> str:
@@ -172,50 +174,17 @@ def _search(paper: "Paper", queries: Sequence[str]) -> list:
         except Exception:  # noqa: BLE001 —— 单篇索引坏了不该拖垮整篇综述
             continue
         for hit in hits:
-            if _is_reference_list(hit.chunk):
-                continue  # 引文串不当证据，见 REF_LIST_MARKERS
+            if is_reference_list(hit.chunk):
+                continue  # 引文串不当证据，见 app.rag.evidence
             kept = best.get(hit.chunk.index)
             if kept is None or hit.score > kept.score:
                 best[hit.chunk.index] = hit
     return sorted(best.values(), key=lambda h: (-h.score, h.chunk.index))[:PER_PAPER_CHUNKS]
 
 
-def _is_front_matter(chunk) -> bool:
-    """第 1 页的标题/作者/版权块：能引用，但作为证据毫无信息量。
-
-    判据刻意保守 —— 只要不是"整块都是人名和版权声明"就放行：
-    正文块通常有句号、有较多 token；前置块往往以作者名开头、几乎不含句号。
-    """
-    text = chunk.text.strip()
-    if getattr(chunk, "n_tokens", 0) >= 120:
-        return False
-    if text.count(".") >= 3:
-        return False
-    low = text.lower()
-    return getattr(chunk, "page_start", 1) == 1 or "copyright" in low or "@" in text
-
-
-def _is_reference_list(chunk) -> bool:
-    """参考文献 / 附录引文串：能引用，但作为论据没有任何信息量。
-
-    有章节名就认名字；没有章节名时看形态 —— 一块里塞了 6 个以上的 `[12]`，
-    基本只可能是引文列表。判据放宽一点没关系：漏掉一块引文只是浪费一次召回，
-    而把引文列表当证据，会让整篇综述的可信度崩塌。
-    """
-    section = (getattr(chunk, "section", "") or "").lower()
-    if any(marker in section for marker in REF_LIST_MARKERS):
-        return True
-    return len(re.findall(r"\[\d{1,3}\]", getattr(chunk, "text", "") or "")) >= 6
-
-
 def _fallback_chunks(paper: "Paper") -> list:
     """检索 0 召回时的兜底：取第一篇"像正文"的块，而不是第 0 块。"""
-    body = [
-        c
-        for c in paper.chunks
-        if not _is_front_matter(c) and not _is_reference_list(c)
-    ]
-    return (body or paper.chunks)[:PER_PAPER_CHUNKS]
+    return body_chunks(paper.chunks, PER_PAPER_CHUNKS)
 
 
 def collect_evidence(
@@ -237,6 +206,9 @@ def collect_evidence(
     max_papers = clamp_max_papers(max_papers)
     # 检索词扩展：中文主题 × 英文库不扩展就是 0 召回。失败自动退回原主题。
     queries = list(queries) if queries else [topic]
+
+    # 先归并多版本，再检索：名额是按"多少篇工作"给的，不能按"多少个文件"给
+    papers = one_version_per_work(papers)
 
     scored: list[tuple[float, "Paper", list]] = []
     for paper in papers:
@@ -275,6 +247,8 @@ def collect_evidence(
             page=chunk.page_start,
             section=chunk.section,
             text=chunk.text,
+            version=getattr(paper, "arxiv_version", 0) or 0,
+            scanned=bool(getattr(paper, "scanned", False)),
         )
         for i, (_score, paper, chunk) in enumerate(picked, start=1)
     ]
@@ -297,7 +271,7 @@ def _future_excerpts(papers: Sequence["Paper"]) -> list[tuple["Paper", object]]:
             chosen = matched[:PER_PAPER_CHUNKS]
         else:
             # 论文最后一块几乎总是参考文献，拿它当"未来工作"是自欺欺人
-            usable = [c for c in paper.chunks if not _is_reference_list(c)]
+            usable = [c for c in paper.chunks if not is_reference_list(c)]
             chosen = (usable or paper.chunks)[-1:]
         for chunk in chosen:
             key = (paper.id, chunk.index)

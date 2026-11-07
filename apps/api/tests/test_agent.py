@@ -40,6 +40,7 @@ REQUIRED_TOOLS = {
     "search_arxiv",
     "citation_graph",
     "find_main_papers",
+    "find_tables",
 }
 
 
@@ -120,6 +121,60 @@ def test_tools_endpoint_lists_real_capabilities(client):
         assert item["description"], "每个工具都要有中文说明给前端展示"
         assert isinstance(item["parameters"], dict)
         assert item["read_only"] is True
+
+
+# ------------------------------------------------------------ 读表格
+
+
+def _table_paper(title: str, label: str = "Table 2.1"):
+    """一个只带表格结果的假文献：工具层不需要真 PDF 落盘。"""
+    from types import SimpleNamespace
+
+    from app.parsing.visuals import DocTable, VisualReport
+
+    table = DocTable(
+        page=8,
+        bbox=(0.0, 0.0, 1.0, 1.0),
+        label=label,
+        caption=f"{label}: Sizes and architectures.",
+        rows=(("Model Name", "nlayers"), ("GPT-3 Small", "12"), ("GPT-3 175B", "96")),
+    )
+    report = VisualReport((table,), (), 75, 40, (), "表格 1 张、插图 0 幅。")
+    return SimpleNamespace(id="p1", title=title, visuals=report)
+
+
+def test_find_tables_tool_keeps_a_row_next_to_its_header():
+    """命中行必须带着表头一起回去 —— 只有 `GPT-3 175B | 96` 看不出 96 是层数。"""
+    from app.agent.registry import TOOLS, ToolContext
+
+    outcome = TOOLS.execute(
+        "find_tables", {"paper_id": "p1", "keyword": "175b"}, ToolContext([_table_paper("GPT-3")])
+    )
+
+    assert outcome.ok is True
+    assert "GPT-3 175B | 96" in outcome.summary
+    assert "Model Name | nlayers" in outcome.summary
+    assert "GPT-3 Small" not in outcome.summary, "关键词筛过的行不该跟着回来"
+    assert outcome.data["tables"][0]["page"] == 8
+
+
+def test_find_tables_tool_says_why_a_scan_yields_nothing():
+    """扫描件提不出表格是结论，不是错误：说明原因，别让 Agent 猜。"""
+    from types import SimpleNamespace
+
+    from app.agent.registry import TOOLS, ToolContext
+    from app.parsing.visuals import VisualReport
+
+    report = VisualReport(
+        (), (), 15, 15, tuple(range(1, 16)), "前 15 页里有 15 页是扫描页，这份 PDF 提不出图表。"
+    )
+    paper = SimpleNamespace(id="p2", title="扫描版 Attention", visuals=report)
+
+    outcome = TOOLS.execute("find_tables", {"paper_id": "p2"}, ToolContext([paper]))
+
+    assert outcome.ok is True
+    assert "扫描页" in outcome.summary
+    assert outcome.data["count"] == 0
 
 
 # ------------------------------------------------------------ 只规划

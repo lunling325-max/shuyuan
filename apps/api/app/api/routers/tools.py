@@ -97,6 +97,8 @@ class ArxivIngestOut(BaseModel):
     paper: PaperOut
     duplicate_of: str | None = None
     fetched_bytes: int
+    # 库里已经有这篇了，这次一个字节都没下载
+    already_present: bool = False
 
 
 @router.get("/api/tools/arxiv/search", response_model=ArxivSearchOut)
@@ -152,8 +154,26 @@ def multi_search(q: str, sources: str = "", limit: int = DEFAULT_LIMIT) -> Searc
     status_code=201,
 )
 def arxiv_ingest(req: ArxivIngestRequest) -> ArxivIngestOut:
+    """下载一篇 arXiv PDF 并入库。
+
+    **先查库再下载。** 以前是先无条件下载，再靠内容哈希认出"这篇已经在库里"：
+    界面上是"点了一下、转 88 秒、然后什么都没变"（实测这次 87.8 秒全花在
+    下载同一份 557KB 的文件上）。arXiv 号是精确标识，比对一次是毫秒级的。
+    """
     try:
         arxiv_id = normalize_arxiv_id(req.arxiv_id)
+    except InvalidArxivId as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    for paper in deps.registry.all():
+        if paper.arxiv_id == arxiv_id:
+            return ArxivIngestOut(
+                paper=deps.paper_out(paper, None),
+                already_present=True,
+                fetched_bytes=0,
+            )
+
+    try:
         data = download_pdf(arxiv_id)
     except InvalidArxivId as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -171,7 +191,7 @@ def arxiv_ingest(req: ArxivIngestRequest) -> ArxivIngestOut:
         raise HTTPException(422, f"PDF 解析失败：{exc}") from exc
 
     if not paper.chunks:
-        raise HTTPException(422, "这份 PDF 里没有抽到可用的正文（可能是纯扫描件）")
+        raise HTTPException(422, "该 PDF 未能抽取到可用正文（可能为纯扫描件）")
 
     duplicate = deps.registry.find_similar(paper)
     return ArxivIngestOut(

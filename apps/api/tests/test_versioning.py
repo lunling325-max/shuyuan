@@ -143,6 +143,68 @@ def test_unrelated_sentences_become_insert_and_delete_not_replace():
     assert 0.0 < MATCH_RATIO <= TRIVIAL_RATIO  # 分档顺序不能反
 
 
+def test_length_prefilter_never_drops_a_possible_match():
+    """先比长度再比内容，前提是上界够紧：比它小的句对不可能达到 MATCH_RATIO。"""
+    from app.versioning import _ratio, _ratio_bound
+
+    assert _ratio_bound(10, 10) == 1.0
+    # 一边长三倍以上就已经没戏了：2·min/(la+lb) < 0.5
+    assert _ratio_bound(10, 31) < MATCH_RATIO
+
+    # 随机取一批句对，凡是真算出来够格的，上界必须也够格
+    pairs = [
+        ("we use eight gpus to train the model", "we use eight gpus to train the model."),
+        ("the encoder is composed of six layers", "the decoder is composed of six layers"),
+        ("attention is all you need", "attention"),
+    ]
+    for a, b in pairs:
+        assert _ratio_bound(len(normalize(a)), len(normalize(b))) >= _ratio(a, b) - 1e-9
+
+
+def test_oversized_block_is_not_paired_sentence_by_sentence():
+    """整本书对上几句话时逐句配对是 O(n·m)：实测 342×10737 要跑两分钟以上。
+
+    这类块本来也不是"两个版本"的差异，整块报成一处替换即可，别把请求拖死。
+    """
+    from app.versioning import MAX_REFINE_PAIRS, _whole_block_change
+
+    old = [Sentence(1, f"Old line {i}: we use eight GPUs to train the model.", "3.1")
+           for i in range(200)]
+    new = [Sentence(1 + i // 40, f"Sentence number {i} about dividends and yields.", "")
+           for i in range(300)]
+
+    assert len(old) * len(new) > MAX_REFINE_PAIRS
+    change = _whole_block_change(old, new)
+    assert change.kind == "replace"
+    assert len(change.old) == 200 and len(change.new) == 300
+    assert change.old_pages == [1]
+    assert change.new_pages[0] == 1 and change.new_pages[-1] == 1 + (299 // 40)
+    assert change.section == "3.1", "节信息要留一边的，不然摘要里挂不上出处"
+
+
+def test_diff_versions_skips_refinement_on_an_oversized_block(monkeypatch):
+    """守的是接线：`diff_versions` 必须真的不走 `_refine`，而不只是常量存在。"""
+    from app import versioning
+
+    old = [Sentence(1, "We use eight GPUs to train the model.", "3.1")]
+    new = [Sentence(1 + i // 100, f"Line {i}: dividend yields fell sharply.", "")
+           for i in range(30000)]
+
+    monkeypatch.setattr(versioning, "load_sentences",
+                        lambda path, **kw: old if str(path).endswith("old.pdf") else new)
+    monkeypatch.setattr(versioning, "_page_count", lambda path: 1)
+
+    def never(a: str, b: str) -> float:
+        raise AssertionError("超大块不该做句对比较")
+
+    monkeypatch.setattr(versioning, "_ratio", never)
+
+    diff = versioning.diff_versions("old.pdf", "new.pdf")
+    assert len(diff.changes) == 1
+    assert diff.changes[0].kind == "replace"
+    assert len(diff.changes[0].new) == 30000
+
+
 def test_refine_pairs_sentences_one_to_one():
     """贪婪配对必须一人一个 —— 同一句被配给两条新句会让改动数虚高一倍。"""
     old = [Sentence(1, "The encoder is composed of a stack of six identical layers.", "3.1")]
@@ -331,3 +393,51 @@ def test_prompt_trims_long_sentences():
         for tag in ("OLD: ", "NEW: "):
             if tag in line:
                 assert len(line.split(tag, 1)[1]) <= MAX_BODY_CHARS + 1
+
+
+def test_a_scanned_page_is_read_by_ocr_so_the_diff_is_not_all_inserts(tmp_path, monkeypatch):
+    """扫描件参与对比时，句子必须从 OCR 文本里来。
+
+    踩过的坑：扫描版对上文本版，diff 给出"新增 50 句、删除 0 句" —— 用户读到的
+    是"作者一次性重写了整篇"。真相是 `load_sentences` 只读文字层，扫描件读出来
+    是空串，于是另一版的每一句都成了新增。现在没有文字层的页会退到 OCR。
+    """
+    import pymupdf
+
+    from app.parsing import scan
+    from app.versioning import load_sentences
+
+    blank = tmp_path / "scan.pdf"
+    doc = pymupdf.open()
+    doc.new_page()
+    doc.save(str(blank))
+    doc.close()
+
+    text = "Attention is all you need. This sentence only exists in the scan."
+    line = scan.OcrLine(text, (72, 72, 400, 90), [scan.OcrWord(text, (72, 72, 400, 90))], 12.0)
+    monkeypatch.setattr(scan, "ocr_lines", lambda page, dpi=None: [line])
+
+    sentences = load_sentences(blank)
+    assert len(sentences) == 2, "OCR 出来的两句话都应该进对齐"
+    assert sentences[0].text.startswith("Attention is all you need")
+
+
+def test_a_text_page_never_triggers_ocr(tmp_path, monkeypatch):
+    """有文字层的页不许走 OCR：多跑一遍既慢又没必要。"""
+    import pymupdf
+
+    from app.parsing import scan
+    from app.versioning import load_sentences
+
+    typed = tmp_path / "typed.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "A typed sentence that lives in the text layer.")
+    doc.save(str(typed))
+    doc.close()
+
+    def boom(*_a, **_k):
+        raise AssertionError("有文字层的页不该调用 OCR")
+
+    monkeypatch.setattr(scan, "ocr_lines", boom)
+    assert load_sentences(typed)[0].text.startswith("A typed sentence")

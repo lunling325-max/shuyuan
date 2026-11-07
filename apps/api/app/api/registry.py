@@ -61,15 +61,67 @@ def _unlink_retry(path: Path, *, attempts: int = 6) -> None:
 
 
 def _ocr_hook():
-    """有 Tesseract 就把页级 OCR 钩子交给切块器，没有就返回 None。
+    """有 OCR 引擎就把页级钩子交给切块器，没有就返回 None。
 
-    在注册表这一层做判断，而不是在切块器里：切块器若直接去找 tesseract，
-    每跑一次单元测试都要依赖本机装没装 OCR 引擎，测试结果就不可复现了。
-    `ocr_enabled()` 带缓存，541 页的教材不会探 541 次子进程。
+    在注册表这一层做判断，而不是在切块器里：切块器若直接去找引擎，
+    每跑一次单元测试都要依赖本机装没装 RapidOCR，测试结果就不可复现了。
+    `ocr_enabled()` 带缓存，几百页的教材不会探几百次。
     """
     from app.parsing.scan import ocr_blocks_for_page, ocr_enabled
 
     return ocr_blocks_for_page if ocr_enabled() else None
+
+
+def _chunk(path: Path) -> list[Chunk]:
+    """先把扫描页并发识别掉，再交给切块器。
+
+    顺序很重要：`extract_paras` 是逐页同步调 OCR 钩子的，串行识别 15 页扫描件
+    要两三分钟，上传接口就那么干等着。`warm()` 先把这些页并发识别完，
+    切块器随后逐页取用时全是缓存命中 —— 实测同一份 15 页扫描件上传
+    2m39s → 1m42s。非扫描件这一趟什么都不做（只读几页文字层），可以忽略。
+    """
+    from app.parsing.scan import warm
+
+    warm(str(path))
+    return chunk_pdf(str(path), ocr=_ocr_hook())
+
+
+def _clean_filename(filename: str) -> str:
+    """只留文件名本身：路径成分与不可打印字符一律去掉。
+
+    上传时客户端送来什么就是什么 —— 实测能送进 `../../evil.pdf`，
+    它会一路存进 sidecar，再原样拼成
+    `Content-Disposition: attachment; filename="../../evil.pdf"`。
+    浏览器自己会剥掉路径，所以这不是漏洞；但"库里存着一个带路径的文件名"
+    迟早有人当成路径去用，而且文献库里显示 `../../evil.pdf` 也说不通。
+    """
+    name = Path(str(filename).replace("\\", "/")).name
+    name = "".join(ch for ch in name if ch.isprintable()).strip()
+    if not name or set(name) <= {"."}:
+        return "untitled.pdf"
+    return name[:160]
+
+
+# 标题识别规则的版本号，写进 sidecar。改动识别逻辑就加一 —— 老 sidecar 里存着的
+# 是旧规则算出来的标题（比如 2 版之前的 "DISTFLASHATTN:Distributed Memory-efficientAttention"），
+# 不重算的话它会永远留在库里，代码修好了也白修。
+#   1: 按 span 挑"字号恰好等于最大值"，行间用空格拼
+#   2: 按行挑（容忍 0.8pt 字号差），行内拼 span 不加空格
+#   3: 版面标题全大写、而元数据是逐字相同的正常写法时，采用元数据的大小写
+TITLE_SCHEMA = 3
+
+
+def _title_shaped(text: str) -> bool:
+    """OCR 的一行字**形式上**像不像标题：够长、不是邮箱、不是符号堆。
+
+    只做形式判断，位置和宽度由调用方负责 —— 这样这段逻辑在文本层那条路上
+    也用得上，两边不必各写一套。
+    """
+    t = " ".join(text.split())
+    if len(t) < 8 or "@" in t:
+        return False
+    letters = sum(ch.isalpha() for ch in t)
+    return letters >= len(t) * 0.6
 
 
 @dataclass
@@ -83,10 +135,19 @@ class Paper:
     uploaded_at: str
     created_at: str = ""  # PDF 元数据里的生成日期（YYYY-MM-DD），判断谁更新靠它
     arxiv_id: str = ""  # 如 "1706.03762"（不带版本号）；引用图谱靠它认预印本
+    arxiv_version: int = 0  # arXiv 的 vN（v7 → 7）；0 表示取不到，表示"不知道"而不是"v1"
+    # 首页投稿戳上印的日期（YYYY-MM-DD）。它和 created_at **不是一回事**：
+    # created_at 是"这份 PDF 什么时候导出的"，这个是"这一版什么时候投到 arXiv 的"。
+    # 2025 年以后 arXiv 换了 GenPDF，导出时不再写 creationDate/modDate，
+    # 一批新论文的 created_at 全是空串，界面上只能写"生成日期未知"。
+    # 戳上的日期是 arXiv 自己印的，比元数据可靠，所以另立一栏，不去冒充 created_at。
+    arxiv_date: str = ""
+    scanned: bool = False  # 首页没有文本层：正文与标题都得靠 OCR 认
     _index: TextIndex | None = field(default=None, repr=False)
     _bm25: BM25 | None = field(default=None, repr=False)
     _fingerprint: set[str] | None = field(default=None, repr=False)
     _refs: list | None = field(default=None, repr=False)
+    _visuals: object | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
@@ -115,8 +176,26 @@ class Paper:
                 if self._refs is None:
                     from app.references import extract_references
 
-                    self._refs = extract_references(self.chunks, self.path)
+                    self._refs = extract_references(
+                        self.chunks, self.path, ocr=_ocr_hook()
+                    )
         return self._refs
+
+    @property
+    def visuals(self):
+        """表格与插图（懒解析 + 进程内缓存，磁盘上还有一份）。
+
+        为什么不放在上传时解析：`find_tables()` 实测 0.29 秒/页，75 页的 GPT-3
+        要 22 秒 —— 上传接口干等这一趟不值得，用户也不一定马上要看图表。
+        第一次点开"图表"标签时再算，算完 `visuals.analyze` 自己会落盘。
+        """
+        if self._visuals is None:
+            with self._lock:
+                if self._visuals is None:
+                    from app.parsing.visuals import analyze
+
+                    self._visuals = analyze(self.path)
+        return self._visuals
 
     @property
     def text_index(self) -> TextIndex:
@@ -134,6 +213,34 @@ class Paper:
                 if self._bm25 is None:
                     self._bm25 = BM25(self.chunks)
         return self._bm25
+
+
+def order_versions(a: Paper, b: Paper) -> tuple[Paper, Paper, str]:
+    """谁旧谁新，外加一条"凭什么这么判"，前端要照实说。
+
+    优先级：
+    1. **同一篇（arXiv 号一致）且两边都取得到版本号** → vN 小的在前。这是唯一
+       能顶住"扫描件没有元数据日期""两版同一天导出"的判据。
+    2. 两份 PDF 生成日期都有 → 日期早的在前。
+    3. 兜底用上传时间，并且明确标成 `uploaded_at` —— 它只说明"你什么时候传的"，
+       和论文本身的新旧无关，界面上不该把它讲成版本先后。
+
+    放在 registry 这一层而不是某个路由里：HTTP 接口和 Agent 工具都要判新旧，
+    之前各写一遍，扫描件在两条路上的新旧就是相反的。
+    """
+    if a.arxiv_id and a.arxiv_id == b.arxiv_id and a.arxiv_version and b.arxiv_version:
+        if a.arxiv_version != b.arxiv_version:
+            older_first = a.arxiv_version < b.arxiv_version
+            return (a, b, "arxiv_version") if older_first else (b, a, "arxiv_version")
+    if a.created_at and b.created_at and a.created_at != b.created_at:
+        return (a, b, "date") if a.created_at < b.created_at else (b, a, "date")
+    # 这里**故意不用** arxiv_date：它只在前端展示时兜底。
+    # 一边有 created_at、一边只有投稿戳日期，等于拿"PDF 导出时间"去比"arXiv 投稿时间"，
+    # 比出来的先后没法解释；更要紧的是这一层的结论会被上传页拿去建议"删哪一份"，
+    # 凭一份半残的证据劝人删文件，比老实说"判不出来"危险得多。
+    if (a.created_at or a.uploaded_at) <= (b.created_at or b.uploaded_at):
+        return a, b, "uploaded_at"
+    return b, a, "uploaded_at"
 
 
 class PaperRegistry:
@@ -160,13 +267,25 @@ class PaperRegistry:
                 pdf_path = self.store_dir / f"{meta['id']}.pdf"
                 if not pdf_path.exists():
                     continue
-                chunks = chunk_pdf(str(pdf_path), ocr=_ocr_hook())
+                chunks = _chunk(pdf_path)
                 if not chunks:
                     continue
-                self._papers[meta["id"]] = Paper(
+                filename = meta.get("filename") or pdf_path.name
+                title = meta.get("title") or self._title(pdf_path, pdf_path.name)
+                # 以前存下来的标题可能是文件名兜底（1706.03762v1_scan 就是那么来的）。
+                # 标题等于文件主名就说明当初没认出来，重算一次 —— 现在扫描件会走 OCR，
+                # 同一份文件能拿到真标题。算不出来还是原样，不会把好标题改坏。
+                # 另外：识别规则升级过（TITLE_SCHEMA）的旧 sidecar 也重算一次，
+                # 否则修好了规则、库里还是那串连体字，等于没修。
+                stale = int(meta.get("title_v") or 0) < TITLE_SCHEMA
+                if title == Path(filename).stem or stale:
+                    better = self._title(pdf_path, filename)
+                    if better and better != title:
+                        title = better
+                paper = Paper(
                     id=meta["id"],
-                    filename=meta.get("filename") or pdf_path.name,
-                    title=meta.get("title") or self._title(pdf_path, pdf_path.name),
+                    filename=filename,
+                    title=title,
                     pages=meta.get("pages") or self._page_count(pdf_path),
                     chunks=chunks,
                     path=pdf_path,
@@ -174,8 +293,20 @@ class PaperRegistry:
                     created_at=meta.get("created_at") or self._pdf_date(pdf_path),
                     # 兜底要用**原始文件名**：落盘的 PDF 叫 `<hash>.pdf`，里面没有 arXiv 号
                     arxiv_id=meta.get("arxiv_id")
-                    or self._arxiv_id(pdf_path, meta.get("filename") or pdf_path.name),
+                    or self._arxiv_id(pdf_path, filename),
+                    arxiv_version=meta.get("arxiv_version")
+                    or self._arxiv_version(pdf_path, filename),
+                    arxiv_date=meta.get("arxiv_date") or self._arxiv_date(pdf_path),
+                    scanned=bool(meta.get("scanned", False)) or self._is_scanned(pdf_path),
                 )
+                self._papers[paper.id] = paper
+                if (paper.title, paper.arxiv_version, paper.scanned, paper.arxiv_date) != (
+                    meta.get("title"),
+                    meta.get("arxiv_version") or 0,
+                    bool(meta.get("scanned", False)),
+                    meta.get("arxiv_date") or "",
+                ) or int(meta.get("title_v") or 0) < TITLE_SCHEMA:
+                    self._write_meta(paper)  # 补上新字段：下次启动就不用再算一遍
             except Exception:  # noqa: BLE001 —— 单个坏文件不该拖垮整个启动
                 continue
 
@@ -185,7 +316,7 @@ class PaperRegistry:
             if pdf_path.stem in self._papers:
                 continue
             try:
-                chunks = chunk_pdf(str(pdf_path), ocr=_ocr_hook())
+                chunks = _chunk(pdf_path)
                 if not chunks:
                     continue
                 self._papers[pdf_path.stem] = Paper(
@@ -198,6 +329,9 @@ class PaperRegistry:
                     uploaded_at="",
                     created_at=self._pdf_date(pdf_path),
                     arxiv_id=self._arxiv_id(pdf_path, pdf_path.name),
+                    arxiv_version=self._arxiv_version(pdf_path, pdf_path.name),
+                    arxiv_date=self._arxiv_date(pdf_path),
+                    scanned=self._is_scanned(pdf_path),
                 )
             except Exception:  # noqa: BLE001
                 continue
@@ -291,6 +425,7 @@ class PaperRegistry:
 
     def add(self, data: bytes, filename: str) -> Paper:
         """落盘 + 切块。同一份内容重复上传直接返回已有记录。"""
+        filename = _clean_filename(filename)
         digest = hashlib.sha256(data).hexdigest()[:12]
         with self._lock:
             if digest in self._papers:
@@ -300,7 +435,7 @@ class PaperRegistry:
         if not path.exists():
             path.write_bytes(data)
 
-        chunks = chunk_pdf(str(path), ocr=_ocr_hook())
+        chunks = _chunk(path)
         pages = self._page_count(path)
         title = self._title(path, filename)
         paper = Paper(
@@ -313,6 +448,9 @@ class PaperRegistry:
             uploaded_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             created_at=self._pdf_date(path),
             arxiv_id=self._arxiv_id(path, filename),
+            arxiv_version=self._arxiv_version(path, filename),
+            arxiv_date=self._arxiv_date(path),
+            scanned=self._is_scanned(path),
         )
         with self._lock:
             # 两个请求同时上传同一份文件时，先写入的那个胜出，后一个拿到同一对象，
@@ -320,20 +458,28 @@ class PaperRegistry:
             self._papers.setdefault(digest, paper)
             stored = self._papers[digest]
 
-        # sidecar 用"先写临时文件再改名"，避免进程半路被杀留下半截 JSON，
-        # 下次启动解析失败就被当成坏文件跳过了
-        meta_path = self.store_dir / f"{stored.id}.json"
+        self._write_meta(stored)
+        return stored
+
+    def _write_meta(self, paper: Paper) -> None:
+        """写 sidecar。先写临时文件再改名，避免进程半路被杀留下半截 JSON ——
+        下次启动解析失败就被当成坏文件跳过了。"""
+        meta_path = self.store_dir / f"{paper.id}.json"
         tmp_path = meta_path.with_suffix(".json.tmp")
         tmp_path.write_text(
             json.dumps(
                 {
-                    "id": stored.id,
-                    "filename": stored.filename,
-                    "title": stored.title,
-                    "pages": stored.pages,
-                    "uploaded_at": stored.uploaded_at,
-                    "created_at": stored.created_at,
-                    "arxiv_id": stored.arxiv_id,
+                    "id": paper.id,
+                    "filename": paper.filename,
+                    "title": paper.title,
+                    "title_v": TITLE_SCHEMA,
+                    "pages": paper.pages,
+                    "uploaded_at": paper.uploaded_at,
+                    "created_at": paper.created_at,
+                    "arxiv_id": paper.arxiv_id,
+                    "arxiv_version": paper.arxiv_version,
+                    "arxiv_date": paper.arxiv_date,
+                    "scanned": paper.scanned,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -341,7 +487,6 @@ class PaperRegistry:
             encoding="utf-8",
         )
         tmp_path.replace(meta_path)
-        return stored
 
     # ------------------------------------------------------------ 内部
 
@@ -386,6 +531,89 @@ class PaperRegistry:
         m = re.match(r"(\d{4}\.\d{4,5})", Path(filename).stem)
         return m.group(1) if m else ""
 
+    # 投稿戳带版本号：arXiv:1706.03762v7 [cs.CL] 2 Aug 2023
+    _ARXIV_VERSIONED = re.compile(r"arxiv:\s*\d{4}\.\d{4,5}v(\d+)", re.IGNORECASE)
+    _STEM_VERSIONED = re.compile(r"\d{4}\.\d{4,5}v(\d+)")
+
+    @staticmethod
+    def _arxiv_version(path: Path, filename: str) -> int:
+        """arXiv 的版本号（v7 → 7）；取不到返回 0 —— 0 是"不知道"，不是 v1。
+
+        为什么版本谱系非得有它：`created_at` 只精确到天，同一篇的两个版本
+        常常由同一个人在同一天导出，比不出先后；扫描件连元数据日期都没有，
+        以前就只能退回上传时间 —— 结果是"后传的扫描件 v1"被判成了更新的那版。
+        vN 是作者发版时自己打的，对同一篇论文来说它才是最硬的新旧依据。
+        """
+        doc = pymupdf.open(str(path))
+        try:
+            first = doc[0].get_text()
+        finally:
+            doc.close()
+        m = PaperRegistry._ARXIV_VERSIONED.search(first) or PaperRegistry._STEM_VERSIONED.search(
+            Path(filename).stem
+        )
+        return int(m.group(1)) if m else 0
+
+    # 首页左侧那行旋转的投稿戳，日期就在方括号后面：
+    #   arXiv:2508.18224v3  [cs.DC]  1 Jul 2026
+    # 方括号里的分类最长也就 "cs.CL"、"physics.soc-ph" 这种，给 20 个字符足够；
+    # 版本号有的 PDF 没有（早期投稿戳），所以整段 `vN` 可选。
+    _ARXIV_STAMP_DATE = re.compile(
+        r"arxiv:\s*\d{4}\.\d{4,5}(?:v\d+)?\s*\[[^\]]{0,20}\]\s*"
+        r"(\d{1,2})\s+([A-Za-z]{3})[A-Za-z]*\.?\s+(\d{4})",
+        re.IGNORECASE,
+    )
+    _MONTHS = {
+        name: i
+        for i, name in enumerate(
+            ("jan", "feb", "mar", "apr", "may", "jun",
+             "jul", "aug", "sep", "oct", "nov", "dec"),
+            start=1,
+        )
+    }
+
+    @staticmethod
+    def _arxiv_date(path: Path) -> str:
+        """首页投稿戳上的日期（YYYY-MM-DD）；取不到返回空串。
+
+        为什么要它：arXiv 从 2025 年起改用 GenPDF 生成 PDF，导出时不再写
+        creationDate/modDate —— 实测 FSA（2508.18224v3）的元数据里两个日期都是
+        空串，`producer` 是 `pikepdf 8.15.1`。于是文献库里一排论文全显示
+        "生成日期未知"，看着像解析坏了，其实 PDF 里真的没有这个字段。
+
+        而投稿戳上的日期是 arXiv 印在版面上的，随版本走、比元数据可靠。
+        它**不等于** created_at（导出时间 ≠ 投稿时间），所以单独存一栏、
+        前端也分开措辞，不拿它去冒充 PDF 生成日期。
+        """
+        doc = pymupdf.open(str(path))
+        try:
+            first = doc[0].get_text()
+        finally:
+            doc.close()
+        m = PaperRegistry._ARXIV_STAMP_DATE.search(first)
+        if not m:
+            return ""
+        day, month, year = int(m.group(1)), m.group(2).lower()[:3], int(m.group(3))
+        month_no = PaperRegistry._MONTHS.get(month)
+        if not month_no or not 1 <= day <= 31:
+            return ""
+        return f"{year:04d}-{month_no:02d}-{day:02d}"
+
+    @staticmethod
+    def _is_scanned(path: Path) -> bool:
+        """首页抽不出文字就当扫描件。
+
+        判据只看首页、而且门槛放得很低（20 个字）：论文首页一定有标题、作者、
+        摘要，正常 PDF 不可能凑不出 20 个字；反过来，扫描件里偶尔混进一页有
+        文字层的（版权页、封面）也不该让整篇被误当成有文本层。
+        """
+        doc = pymupdf.open(str(path))
+        try:
+            text = doc[0].get_text().strip()
+        finally:
+            doc.close()
+        return len(text) < 20
+
     @staticmethod
     def _page_count(path: Path) -> int:
         doc = pymupdf.open(str(path))
@@ -408,6 +636,11 @@ class PaperRegistry:
         """
         candidate = PaperRegistry._title_from_layout(path)
         if candidate:
+            return PaperRegistry._prefer_meta_casing(path, candidate)
+
+        # 扫描件：整页没有文本层，字号那套判据全都落空，只能让 OCR 来认
+        candidate = PaperRegistry._title_from_ocr(path)
+        if candidate:
             return candidate
 
         doc = pymupdf.open(str(path))
@@ -419,6 +652,31 @@ class PaperRegistry:
             return meta[:200]
         return Path(filename).stem
 
+    @staticmethod
+    def _prefer_meta_casing(path: Path, title: str) -> str:
+        """版面标题若是全大写、而元数据里是同一个标题的正常大小写，就用元数据的写法。
+
+        只换大小写，**一个字都不换**：两者去掉标点、压成小写后必须完全一致才动手。
+        ICLR/NeurIPS 的模板把标题排成全大写，文献库里一排 `FSA: AN ALTERNATIVE
+        EFFICIENT IMPLEMENTATION OF…` 读起来像在喊。而这里敢信元数据，正是因为
+        它和版面标题逐字相同 —— 换一篇（元数据是 "scholarly works." 那种）就对不上了。
+        """
+        letters = [ch for ch in title if ch.isalpha()]
+        if not letters or any(ch.islower() for ch in letters):
+            return title  # 本来就不是全大写，不动
+        doc = pymupdf.open(str(path))
+        try:
+            meta = ((doc.metadata or {}).get("title") or "").strip()
+        finally:
+            doc.close()
+        if not meta or len(meta) > 200:
+            return title
+
+        def flatten(text: str) -> str:
+            return "".join(ch for ch in text if ch.isalnum()).lower()
+
+        return meta if flatten(meta) == flatten(title) else title
+
     # arXiv 左侧那行旋转的投稿戳，字号 20 比标题还大，必须先剔掉
     _STAMP = re.compile(r"^arxiv:\S+\s*\[", re.IGNORECASE)
     # 认出来的东西明显不是标题时的兜底判断：章节名、版权行、噪声
@@ -427,41 +685,147 @@ class PaperRegistry:
         "acknowledgments", "acknowledgements", "appendix", "contents",
     }
 
+    # 标题第二行的字号常常比第一行小一点点（实测 14.3 对 14.5）。
+    # 要求"完全等于最大值"会只取到第一行，标题就断在半句上。
+    _TITLE_SIZE_SLACK = 0.8
+
+    @staticmethod
+    def _line_of(line: dict) -> tuple[float, str] | None:
+        """把 PyMuPDF 的一行还原成 (字号, 文本)。
+
+        **行内拼 span 不加分隔符**：排版器省掉的空格本来就不在 span 文本里，
+        补一个空格会造出 `Memory- efficient Attention` 这种原文没有的东西。
+        字号取行内最大的那个 span —— 一行里混着主标题和小型大写字母是常态。
+
+        整行是 arXiv 投稿戳时返回 None：它自带版本号和日期，两版必然不同，
+        留着会让每份论文的标题都变成 `arXiv:1706.03762v7 [cs.CL] …`。
+        """
+        parts: list[str] = []
+        size = 0.0
+        for span in line.get("spans", []):
+            text = span.get("text") or ""
+            if not text:
+                continue
+            if PaperRegistry._STAMP.match(" ".join(text.split())):
+                return None
+            parts.append(text)
+            size = max(size, round(float(span["size"]), 1))
+        text = " ".join("".join(parts).split())
+        return (size, text) if text else None
+
     @staticmethod
     def _title_from_layout(path: Path) -> str | None:
-        """取首页字号最大的那几行，按纵向顺序拼起来。"""
+        """取首页字号最大的那几行，按纵向顺序拼起来。
+
+        按**行**取，不按 span 取。排版器会把一行标题拆成一堆 span：逐字调字距、
+        小型大写字母、局部上标都会让 PyMuPDF 断开。以前只收"字号恰好等于全页
+        最大值"的 span，于是 2310.03294 的标题被拆成 `D`,`F`,`A`,`:`,`Distributed`…
+        再按三个一段截断，最后什么也拼不出来（`_clean_title` 判太短返回 None），
+        标题只好退到 OCR —— 而 OCR 那一路又吃掉了空格，
+        文献库里就出现 `DISTFLASHATTN:Distributed Memory-efficientAttention`。
+
+        行怎么拼见 `_line_of`。这里只管"哪些行算标题"。
+        """
         doc = pymupdf.open(str(path))
         try:
             page = doc[0]
-            spans: list[tuple[float, str, float]] = []
+            lines: list[tuple[float, float, float, str]] = []  # (字号, 顶, 底, 文本)
             for block in page.get_text("dict").get("blocks", []):
                 for line in block.get("lines", []):
-                    for span in line["spans"]:
-                        text = " ".join(span["text"].split())
-                        if not text or PaperRegistry._STAMP.match(text):
-                            continue
-                        spans.append((round(float(span["size"]), 1), text, float(span["bbox"][1])))
+                    got = PaperRegistry._line_of(line)
+                    if got is None:
+                        continue
+                    size, text = got
+                    box = line["bbox"]
+                    lines.append((size, float(box[1]), float(box[3]), text))
         finally:
             doc.close()
 
-        if not spans:
+        if not lines:
             return None
 
-        biggest = max(size for size, _t, _y in spans)
-        lines = sorted((s for s in spans if s[0] == biggest), key=lambda s: s[2])
+        biggest = max(size for size, _y0, _y1, _t in lines)
+        same = sorted(
+            (ln for ln in lines if biggest - ln[0] <= PaperRegistry._TITLE_SIZE_SLACK),
+            key=lambda ln: ln[1],
+        )
 
         # 只拼纵向相邻的行：隔太远的那是别的元素（页脚、图注），不是标题的换行
-        picked = [lines[0]]
-        for size, text, y in lines[1:]:
-            if y - picked[-1][2] > biggest * 2:
+        picked = [same[0]]
+        for line in same[1:]:
+            if line[1] - picked[-1][2] > biggest * 2:
                 break
-            picked.append((size, text, y))
+            picked.append(line)
             if len(picked) == 3:
                 break
 
-        title = " ".join(text for _s, text, _y in picked).strip()
+        return PaperRegistry._clean_title(" ".join(t for _s, _y0, _y1, t in picked))
+
+    @staticmethod
+    def _clean_title(title: str) -> str | None:
+        """两条路（文本层、OCR）共用的最后一道筛子。"""
+        title = " ".join(title.split())
         if len(title) < 8 or title.lower().strip(".") in PaperRegistry._GENERIC:
             return None
         if title.endswith("."):  # "scholarly works." 这类页脚声明
             return None
         return title[:200]
+
+    # OCR 常把标题里的空格吃掉：AttentionIsAllYouNeed
+    _GLUED = re.compile(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])")
+
+    @staticmethod
+    def _despace(text: str) -> str:
+        """给 OCR 标题补回被吃掉的空格。
+
+        只在**整行一个空格都没有**时才按驼峰断词：有空格就说明识别器自己认出了
+        词边界，这时候再按大写字母切，会把 TransformerXL 这类名字切成三段。
+        """
+        if " " in text or len(text) < 12:
+            return text
+        return PaperRegistry._GLUED.sub(" ", text)
+
+    @staticmethod
+    def _title_from_ocr(path: Path) -> str | None:
+        """扫描件专用：用 OCR 的行框挑标题。
+
+        不能照搬文本层那套"字号最大就是标题"：OCR 给出的 `size` 是行高像素当量，
+        噪声很大 —— 实测 1706.03762v1 扫描件首页上，邮箱那行认出来的 size（19）
+        比标题（16）还大，照字号挑会挑出 avaswani@google.com。
+        稳定的判据是**版面宽度 + 居中**：标题是首页上半部分最宽且居中的那一行。
+        """
+        from app.parsing import scan
+
+        if not scan.ocr_enabled():
+            return None
+        doc = pymupdf.open(str(path))
+        try:
+            page = doc[0]
+            height = page.rect.height
+            lines = scan.ocr_lines(page)  # 切块时已经识别过，这里基本是缓存命中
+        finally:
+            doc.close()
+
+        cands = [ln for ln in lines if ln.bbox[3] <= height * 0.45 and _title_shaped(ln.text)]
+        if not cands:
+            return None
+
+        widest = max(cands, key=lambda ln: ln.bbox[2] - ln.bbox[0])
+        w = widest.bbox[2] - widest.bbox[0]
+        cx = (widest.bbox[0] + widest.bbox[2]) / 2
+        h = max(widest.bbox[3] - widest.bbox[1], 1.0)
+
+        # 换行的标题：宽度不至于腰斩、而且和第一行共用同一条中轴线
+        picked = [
+            ln for ln in cands
+            if (ln.bbox[2] - ln.bbox[0]) >= w * 0.55
+            and abs((ln.bbox[0] + ln.bbox[2]) / 2 - cx) <= max(w * 0.15, 8)
+        ]
+        picked.sort(key=lambda ln: ln.bbox[1])
+        out = [picked[0]]
+        for ln in picked[1:]:
+            if len(out) == 3 or ln.bbox[1] - out[-1].bbox[3] > h * 1.6:
+                break
+            out.append(ln)
+        title = " ".join(PaperRegistry._despace(ln.text.strip()) for ln in out)
+        return PaperRegistry._clean_title(title)

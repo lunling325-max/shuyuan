@@ -407,3 +407,76 @@ def test_future_open_solved_status_is_passed_through(client, monkeypatch):
     ]
     assert body["future"][0]["why"] == "还没人做"
     assert body["future"][1]["why"] == "已被后续工作解决"
+
+
+def _versioned(i: int, *, title: str, ver: int, scanned: bool, score: float):
+    """同一篇的某一版：id / 版本号 / 是否扫描件 / 检索分都能单独摆。"""
+    chunk = SimpleNamespace(
+        index=0, text=f"body of version {ver}", section="3 Method",
+        page_start=i, page_end=i,
+    )
+    hits = [SimpleNamespace(score=score, chunk=chunk)]
+    return SimpleNamespace(
+        id=f"p{i:02d}",
+        title=title,
+        created_at="",
+        arxiv_id="1706.03762",
+        uploaded_at="2024-01-01T00:00:00+00:00",
+        arxiv_version=ver,
+        scanned=scanned,
+        chunks=[chunk],
+        bm25=SimpleNamespace(search=lambda q, k=2: hits),
+    )
+
+
+def test_one_version_per_work_prefers_text_layer_over_ocr():
+    """扫描件 v1 的分再高也让位给有文字层的 v7。
+
+    OCR 会把 l 认成 1、0 认成 O；把它的识别结果当"作者原话"引用，
+    溯源就成了反向的 —— 越像原文越错。
+    """
+    from app.rag.works import one_version_per_work
+
+    scanned = _versioned(1, title="Attention Is All You Need", ver=1, scanned=True, score=9.0)
+    clean = _versioned(2, title="Attention Is All You Need", ver=7, scanned=False, score=1.0)
+
+    assert one_version_per_work([scanned, clean]) == [clean]
+
+
+def test_collect_evidence_uses_one_slot_per_work():
+    """两版同一篇只占一个名额，页数才等于"用了几篇工作"。"""
+    from app.rag import review as review_mod
+
+    scanned = _versioned(1, title="Attention Is All You Need", ver=1, scanned=True, score=9.0)
+    clean = _versioned(2, title="Attention Is All You Need", ver=7, scanned=False, score=3.0)
+    other = _versioned(3, title="BERT: Pre-training of Deep Bidirectional Transformers",
+                       ver=2, scanned=False, score=1.0)
+
+    evidence, selected = review_mod.collect_evidence(
+        [scanned, clean, other], "attention", max_papers=2
+    )
+
+    assert [p.id for p in selected] == ["p02", "p03"]
+    assert {e.paper_id for e in evidence} == {"p02", "p03"}
+    assert evidence[0].version == 7
+    assert evidence[0].scanned is False
+
+
+def test_reference_carries_version_so_quote_can_be_traced(monkeypatch):
+    """引用要能看出出自哪一版：v7 和 v1 扫描件的同一页，文字并不一样。"""
+    from app.api import deps
+    from app.api.routers.review import router
+
+    scanned = _versioned(1, title="Attention Is All You Need", ver=1, scanned=True, score=9.0)
+    clean = _versioned(2, title="Attention Is All You Need", ver=7, scanned=False, score=3.0)
+    monkeypatch.setattr(deps, "registry", SimpleNamespace(all=lambda: [scanned, clean]))
+    monkeypatch.setattr("app.llm.client.chat_json", _fake_llm(VALID_SECTIONS, []))
+
+    app = FastAPI()
+    app.include_router(router)
+    body = TestClient(app).post("/api/review", json={"topic": TOPIC}).json()
+
+    ref = body["references"][0]
+    assert ref["paper_id"] == "p02"
+    assert ref["version"] == 7
+    assert ref["scanned"] is False

@@ -87,17 +87,26 @@ def verify_claims(
                 VerifiedClaim(claim=claim, status="supported", anchors=anchors, reason=reason)
             )
         else:
-            worst = min(a.similarity for a in anchors)
+            worst = _format_similarity(min(a.similarity for a in anchors))
             results.append(
                 VerifiedClaim(
                     claim=claim,
                     status="weak",
                     anchors=anchors,
-                    reason=f"仅模糊命中（最低相似度 {worst:.2f}），原文需人工确认",
+                    reason=f"仅模糊命中（最低相似度 {worst}），原文需人工确认",
                 )
             )
 
     return results
+
+
+def _format_similarity(value: float) -> str:
+    """相似度印到四位、去掉尾零。
+
+    两位小数会把 0.9996 印成「1.00」，界面上就出现「仅模糊命中，相似度 1.00」
+    这种自相矛盾的话 —— 用户看到 1.00 会以为这条通过了。
+    """
+    return f"{value:.4f}".rstrip("0").rstrip(".") or "0"
 
 
 def summarize(results: list[VerifiedClaim]) -> dict[str, int]:

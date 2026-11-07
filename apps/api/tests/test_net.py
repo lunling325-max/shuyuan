@@ -227,3 +227,110 @@ def test_short_body_against_declared_length_is_a_failure(monkeypatch):
 
     with pytest.raises(OSError, match="截断"):
         net.fetch_bytes(URL)
+
+
+# ---------------------------------------------------------------- 分块传输
+
+def test_chunked_response_is_read_in_full():
+    """真 chunked 响应不许用 `read(-1)`。
+
+    `http.client` 只有 amt is None 时才走"剥掉分块框架、读完整个流"的正规路径；
+    amt=-1 会命中 `amt <= chunk_left` 分支，先读满第一个 chunk，再用
+    `_safe_read(-1)` 把剩余裸字节（后续 chunk 的长度行、CRLF）一起吞进来。
+    体里插进框架字节，gzip 解压必然 `Error -3 while decompressing data`。
+
+    线上就是这么坏的：OpenAlex 与 Zenodo 走 chunked 且不发 Content-Length，
+    5 个检索源只有这两个全灭；Crossref 带 Content-Length，一直正常（E-021）。
+    用假响应（io.BytesIO）测不出来 —— 它的 `read(-1)` 乖乖读完全部。
+
+    **注意这条只在 Python ≤ 3.11 上会红。** 3.12 的 `_read_chunked` 开头补了
+    `if amt is not None and amt < 0: amt = None`（上游修复），所以本机 venv（3.12）
+    就算写回 `read(-1)` 也照样通过 —— 而镜像用 `python:3.11-slim`。
+    正因为如此，下面另外两条用"看 read 的实参"来守，不依赖解释器版本。
+    """
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    payload = b'{"results": [' + b",".join(b'{"id": %d}' % i for i in range(200)) + b"]}"
+    compressed = gzip.compress(payload)
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self):   # noqa: N802  —— 父类要求这个名字
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            step = 512
+            for i in range(0, len(compressed), step):
+                piece = compressed[i:i + step]
+                self.wfile.write(b"%x\r\n" % len(piece) + piece + b"\r\n")
+            self.wfile.write(b"0\r\n\r\n")
+
+        def log_message(self, *args):   # 别把访问日志刷进测试输出
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/works?search=x"
+        assert net.fetch_bytes(url, timeout=10) == payload
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+class _RecordingResponse(_Response):
+    """记下 `read` 实际收到的实参 —— 这条断言和解释器版本无关。"""
+
+    def __init__(self, body: bytes, **kw):
+        super().__init__(body, **kw)
+        self.reads: list = []
+
+    def read(self, amt=None):
+        self.reads.append(amt)
+        return super().read(amt)
+
+
+def test_read_is_called_with_no_amount_when_there_is_no_limit(monkeypatch):
+    """不限长时必须 `read()`，**不能是 `read(-1)`**。
+
+    Python ≤ 3.11 的 `_read_chunked(-1)` 会先读满第一个 chunk，再用
+    `_safe_read(-1)` 把后面的 chunk 框架字节一起吞进来，gzip 解压随即报
+    `Error -3 while decompressing data`。3.12 补上了这个洞，所以只在容器里
+    （`python:3.11-slim`）复现 —— 这正是"本地全绿、上线两个源全灭"的原因。
+    """
+    response = _RecordingResponse(gzip.compress(b"x" * 5000), encoding="gzip")
+    monkeypatch.setattr(net, "opener", lambda legacy=False: _Opener(response))
+
+    assert net.fetch_bytes(URL) == b"x" * 5000
+    assert response.reads == [None]
+
+
+def test_read_is_capped_one_byte_past_the_limit(monkeypatch):
+    """给了上限就多读一个字节：刚好判断"超没超"，又不至于把内存吃满。
+
+    这里故意不发 Content-Length（chunked/流式都这样），只看 `read` 的实参。
+    真发了 Content-Length 时，读到上限就停会触发"下载被截断"的长度比对 ——
+    那是既有语义（超限的大文件报截断），这条测试不碰它。
+    """
+    response = _RecordingResponse(b"y" * 500)
+    response.headers = {}       # 不发 Content-Length
+    monkeypatch.setattr(net, "opener", lambda legacy=False: _Opener(response))
+
+    assert net.fetch_bytes(URL, max_bytes=100) == b"y" * 101
+    assert response.reads == [101]
+
+
+def test_broken_gzip_stream_becomes_a_plain_oserror(monkeypatch):
+    """zlib.error 不是 OSError，不显式接住会以 `error Error -3 ...` 原文冒到界面。"""
+    monkeypatch.setattr(
+        net, "opener",
+        lambda legacy=False: _Opener(_Response(b"\x1f\x8b\x08\x00garbage", encoding="gzip")),
+    )
+
+    with pytest.raises(OSError, match="gzip 解压失败"):
+        net.fetch_bytes(URL)

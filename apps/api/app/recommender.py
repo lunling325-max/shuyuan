@@ -147,12 +147,12 @@ def _freshness(published: str, today: str) -> tuple[float, str]:
         return 0.0, ""
     days = (now - then).days
     if days <= 0:
-        return 1.0, "今天刚提交"
+        return 1.0, "今日提交"
     if days == 1:
-        return 0.8, "昨天提交"
+        return 0.8, "昨日提交"
     if days < 7:
-        return max(0.2, 0.8 - 0.1 * (days - 1)), f"{days} 天前提交"
-    return 0.0, f"{days} 天前提交"
+        return max(0.2, 0.8 - 0.1 * (days - 1)), f"提交于 {days} 天前"
+    return 0.0, f"提交于 {days} 天前"
 
 
 def rank(
@@ -192,15 +192,15 @@ def rank(
         reasons: list[str] = []
         if matches:
             top = matches[0]
-            reasons.append(f"与库里的《{top.title}》词面重合 {top.similarity:.2f}")
+            reasons.append(f"与库内《{top.title}》词面重合度 {top.similarity:.2f}")
             if len(matches) > 1:
-                reasons.append(f"另外还命中 {len(matches) - 1} 篇")
+                reasons.append(f"另与 {len(matches) - 1} 篇库内文献词面匹配")
         elif profile:
-            reasons.append("与库里现有论文没有明显词面重合（可能是新方向）")
+            reasons.append("与库内现有论文无明显词面重合（可能为新方向）")
         else:
-            reasons.append("文献库还是空的，先按提交时间和开源情况推荐")
+            reasons.append("文献库为空，暂按提交时间与开源情况排序")
         if code_url:
-            reasons.append(f"摘要或备注里给了开源代码 {code_url}")
+            reasons.append(f"摘要或备注中给出了开源代码 {code_url}")
         if fresh_note:
             reasons.append(fresh_note)
 
@@ -254,6 +254,7 @@ class FeedbackStore:
 
     def counts(self, arxiv_id: str, user: str = "") -> tuple[int, int, str]:
         """返回 (赞, 踩, 我投的那一票)。"""
+        user = user or "local"
         votes = self._read().get(arxiv_id) or {}
         up = sum(1 for v in votes.values() if v == "up")
         down = sum(1 for v in votes.values() if v == "down")
@@ -267,13 +268,16 @@ class FeedbackStore:
         """
         if vote not in ("", "up", "down"):
             raise ValueError(f"不认识的投票：{vote!r}")
+        # 空 user 就是"本机这个人"：读和写必须用同一个名字，否则投完票
+        # 读回来的时候找不到自己那一票，界面上按钮永远不亮
+        user = user or "local"
         with self._lock:
             data = self._read()
             bucket = data.setdefault(arxiv_id, {})
             if vote:
-                bucket[user or "local"] = vote
+                bucket[user] = vote
             else:
-                bucket.pop(user or "local", None)
+                bucket.pop(user, None)
             if not bucket:
                 data.pop(arxiv_id, None)
             self._write(data)

@@ -53,10 +53,29 @@ RUN if grep -qF "${PYPI_INDEX_URL}" uv.lock; then \
 
 FROM python:3.11-slim AS runtime
 
-# onnxruntime 的 Linux CPU wheel 依赖 libgomp（OpenMP 运行时）。
-# 缺了它 import 会失败，向量检索只能降级；所以装运行时库，但不装任何编译工具链。
+# 先换 Debian 源：python:3.11-slim 默认指向 deb.debian.org，从这台杭州机器实测
+# 只有 31 KB/s，`apt-get update` 卡满 18 分钟没动静（0% CPU，纯等网络）。
+# 换阿里云源后实测 3.0 MB/s —— 同一份 Release 文件快约 96 倍。
+# 不需要时可以 --build-arg DEBIAN_MIRROR=http://deb.debian.org/debian 换回来。
+# 兼容两种布局：bookworm 用 debian.sources（deb822），更早的用 sources.list。
+ARG DEBIAN_MIRROR=http://mirrors.aliyun.com/debian
+RUN for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do \
+        [ -f "$f" ] && sed -i \
+            -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
+            -e "s|http://security.debian.org/debian-security|${DEBIAN_MIRROR}-security|g" \
+            "$f"; \
+    done; true
+
+# 只装运行时共享库，不装任何编译工具链。三个都缺一不可：
+#   libgomp1 —— onnxruntime 的 Linux CPU wheel 依赖它（OpenMP 运行时），
+#               缺了 import 失败，向量检索只能降级；
+#   libgl1 / libglib2.0-0 / libxcb1 —— OpenCV（rapidocr 的依赖）加载
+#               libGL.so.1 与 libxcb.so.1，slim 镜像里一个都没有。
+#               实测缺 libxcb.so.1 时 `import cv2` 直接 ImportError，
+#               OCR 整条链路降级成"本机没有可用的 OCR 引擎"（E-021）。
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 \
+    && apt-get install -y --no-install-recommends \
+        libgomp1 libgl1 libglib2.0-0 libxcb1 \
     && rm -rf /var/lib/apt/lists/*
 
 # 非 root 运行：应用被攻破时拿不到容器 root 权限。

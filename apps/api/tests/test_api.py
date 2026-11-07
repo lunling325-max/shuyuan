@@ -564,3 +564,434 @@ def test_remove_rolls_back_when_the_file_stays_locked(tmp_path, monkeypatch):
     assert meta_path.exists(), "sidecar 不能先删 —— 否则元数据丢了、文件还在"
     assert paper.path.exists()
 
+
+
+def test_blank_page_upload_does_not_promise_ocr_that_already_ran(client):
+    """全空白页上传失败时，不能告诉用户"解析时会自动识别"。
+
+    实测原话是：「共 1 页，全部缺少文字层，判定为纯扫描件；本机 OCR 引擎（RapidOCR）
+    可用，解析时会自动识别。」—— 可解析刚刚跑完、OCR 也逐页认过了，仍然什么都没抽到。
+    用户照着这句话重传，只会再等一遍同样的失败。
+    """
+    import pymupdf
+
+    blank = pymupdf.open()
+    blank.new_page()  # 一页白纸：既没有文字层，OCR 也无字可认
+    payload = blank.tobytes()
+    blank.close()
+
+    r = client.post("/api/papers", files={"file": ("blank.pdf", payload, "application/pdf")})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert "解析时会自动识别" not in detail, "解析已经结束，这句话是假的"
+    assert "已用 OCR" in detail or "缺少文字层" in detail
+
+
+def test_empty_body_reason_distinguishes_the_three_kinds_of_empty():
+    """三种"空"必须给三种话：没文字层且能 OCR / 没文字层且没引擎 / 有文字层却切不出块。"""
+    from app.api.main import _empty_body_reason
+    from app.parsing.scan import ScanReport
+
+    tried = ScanReport(
+        pages=2, readable_pages=0, scanned_pages=[1, 2], text_chars=0,
+        ocr_available=True, note="判定为纯扫描件；本机 OCR 引擎（RapidOCR）可用，解析时会自动识别。",
+    )
+    assert "已用 OCR" in _empty_body_reason(tried)
+    assert "解析时会自动识别" not in _empty_body_reason(tried)
+
+    no_engine = ScanReport(
+        pages=2, readable_pages=0, scanned_pages=[1, 2], text_chars=0,
+        ocr_available=False, note="判定为纯扫描件；本机没有可用的 OCR 引擎。",
+    )
+    assert "没有可用的 OCR 引擎" in _empty_body_reason(no_engine)
+    assert "uv sync" in _empty_body_reason(no_engine)
+
+    weird = ScanReport(
+        pages=1, readable_pages=1, scanned_pages=[], text_chars=500,
+        ocr_available=True, note="第 1 页有文字层，无需 OCR。",
+    )
+    assert "未能切分出正文段落" in _empty_body_reason(weird)
+
+
+def test_upload_filename_keeps_only_the_basename():
+    """客户端送进来的文件名可能带路径，存库前必须只留最后一段。
+
+    实测能传 `../../evil.pdf` 进来：它会原样存进 sidecar，再拼成
+    `Content-Disposition: attachment; filename="../../evil.pdf"`。
+    浏览器会自己剥路径，所以不是漏洞；但"库里躺着一个带路径的文件名"迟早被人当路径用，
+    文献库里显示 `../../evil.pdf` 也说不通。
+    """
+    from app.api.registry import _clean_filename
+
+    assert _clean_filename("../../evil.pdf") == "evil.pdf"
+    assert _clean_filename(r"C:\Users\x\paper.pdf") == "paper.pdf"
+    assert _clean_filename("论文 v1.pdf") == "论文 v1.pdf"
+    # 只剩点号的名字不能留：. 和 .. 在文件系统里有特殊含义
+    assert _clean_filename("..") == "untitled.pdf"
+    assert _clean_filename("") == "untitled.pdf"
+    assert _clean_filename("   ") == "untitled.pdf"
+    # 超长文件名截断，别让它把 sidecar 撑爆
+    assert len(_clean_filename("a" * 500 + ".pdf")) == 160
+
+
+# ---------------------------------------------------------------- 扫描件的位置
+#
+# 这一批全部来自录演示视频时暴露的问题：上传一份 1706.03762v1 的扫描件，
+# 文献库里它的名字是 `1706.03762v1_scan`、日期是"日期未知"，版本谱系默认
+# 对成了「BERT ↔ 扫描件」，方向还反了（v1 被判成更新的那版）。
+
+
+def test_compare_says_which_clue_decided_the_order(client, paper_id, paper_v1):
+    """新旧判出来了还不够，得说清凭什么 —— 否则没人能复核。
+
+    这两版的 PDF 生成日期也差得很远，但优先级最高的依据是 arXiv 版本号：
+    日期只到"天"，同一天导出的两版它判不出来，扫描件更是连日期都没有。
+    """
+    body = client.get(f"/api/papers/{paper_id}/compare/{paper_v1}?summarize=false").json()
+    assert body["order_by"] == "arxiv_version"
+    assert body["old"]["arxiv_version"] == 1
+    assert body["new"]["arxiv_version"] == 7
+    assert body["ocr_side"] == ""
+
+
+def test_a_scanned_side_is_flagged_in_the_compare_response(
+    client, paper_id, paper_v1, monkeypatch
+):
+    """扫描件那一侧的逐字差异里混着 OCR 误差，接口必须把它标出来。
+
+    不标的话前端只能照常显示"删除 50 句"，读起来像作者把半篇论文删了。
+    """
+    from app.api.main import registry
+
+    paper = registry.get(paper_v1)
+    monkeypatch.setattr(paper, "scanned", True)
+    body = client.get(f"/api/papers/{paper_id}/compare/{paper_v1}?summarize=false").json()
+    assert body["ocr_side"] == "old"
+
+
+def test_arxiv_version_beats_upload_time_for_the_same_paper():
+    """同一个 arXiv 号、版本号都取得到时，vN 说了算，上传时间没有发言权。"""
+    from pathlib import Path
+
+    from app.api.registry import Paper, order_versions
+
+    def make(pid, version, created, uploaded):
+        return Paper(
+            id=pid, filename=f"{pid}.pdf", title="Attention Is All You Need",
+            pages=1, chunks=[], path=Path(f"{pid}.pdf"), uploaded_at=uploaded,
+            created_at=created, arxiv_id="1706.03762", arxiv_version=version,
+        )
+
+    # 扫描件：没有生成日期，而且**后传**，但它才是 v1
+    scan = make("scan", 1, "", "2026-11-01T07:34:43+00:00")
+    text = make("text", 7, "2024-04-10", "2026-10-31T10:00:01+00:00")
+    old, new, basis = order_versions(scan, text)
+    assert (old.id, new.id, basis) == ("scan", "text", "arxiv_version")
+
+    # 反过来传参也不能改结论
+    assert order_versions(text, scan)[0].id == "scan"
+
+
+def test_order_falls_back_to_the_date_then_admits_it_is_only_upload_time():
+    """版本号取不到时按生成日期；两样都没有时只能说"按上传时间排"，且明说。"""
+    from pathlib import Path
+
+    from app.api.registry import Paper, order_versions
+
+    def make(pid, created, uploaded):
+        return Paper(
+            id=pid, filename=f"{pid}.pdf", title=pid, pages=1, chunks=[],
+            path=Path(f"{pid}.pdf"), uploaded_at=uploaded, created_at=created,
+        )
+
+    a = make("a", "2017-06-13", "2026-11-02T00:00:00+00:00")
+    b = make("b", "2024-04-10", "2026-10-30T00:00:00+00:00")
+    assert order_versions(a, b)[:2] == (a, b)
+    assert order_versions(a, b)[2] == "date"
+
+    # 两份都没有生成日期（典型：两份扫描件）→ 依据降级成上传时间，并如实标注
+    c = make("c", "", "2026-11-02T00:00:00+00:00")
+    d = make("d", "", "2026-10-30T00:00:00+00:00")
+    old, new, basis = order_versions(c, d)
+    assert (old.id, new.id, basis) == ("d", "c", "uploaded_at")
+
+
+def test_arxiv_version_comes_from_the_stamp_and_from_the_filename(tmp_path):
+    """有文字层读投稿戳，扫描件读文件名 —— 两条路都得走通。"""
+    import pymupdf
+
+    from app.api.registry import PaperRegistry
+
+    stamped = tmp_path / "stamped.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "arXiv:1706.03762v7 [cs.CL] 2 Aug 2023")
+    doc.save(str(stamped))
+    doc.close()
+    assert PaperRegistry._arxiv_version(stamped, "whatever.pdf") == 7
+
+    # 扫描件：首页一个字都抽不出来，只能从文件名认
+    blank = tmp_path / "blank.pdf"
+    doc = pymupdf.open()
+    doc.new_page()
+    doc.save(str(blank))
+    doc.close()
+    assert PaperRegistry._arxiv_version(blank, "1706.03762v1_scan.pdf") == 1
+    assert PaperRegistry._arxiv_version(blank, "no-version-here.pdf") == 0
+
+
+def test_arxiv_stamp_date_is_read_as_a_separate_field(tmp_path):
+    """投稿戳上的日期要单独取，不能拿去冒充 PDF 生成日期。
+
+    arXiv 从 2025 年起用 GenPDF 导出，元数据里根本没有 creationDate ——
+    FSA（2508.18224v3）实测两个日期字段都是空串。只写「生成日期未知」会让人
+    以为解析坏了；戳上的日期是真的，但它说的是"这一版什么时候投的"。
+    """
+    import pymupdf
+
+    from app.api.registry import PaperRegistry
+
+    def stamp(name, text):
+        path = tmp_path / name
+        doc = pymupdf.open()
+        doc.new_page().insert_text((72, 72), text)
+        doc.save(str(path))
+        doc.close()
+        return path
+
+    assert PaperRegistry._arxiv_date(stamp("a.pdf", "arXiv:2508.18224v3  [cs.DC]  1 Jul 2026")) == "2026-07-01"
+    assert PaperRegistry._arxiv_date(stamp("b.pdf", "arXiv:1706.03762v7 [cs.CL] 2 Aug 2023")) == "2023-08-02"
+    # 早期投稿戳不一定带版本号
+    assert PaperRegistry._arxiv_date(stamp("c.pdf", "arXiv:1706.03762 [cs.CL] 17 Jun 2017")) == "2017-06-17"
+    # 不是 arXiv 的 PDF（报告、自印稿）：没有戳就返回空串，不许瞎猜
+    assert PaperRegistry._arxiv_date(stamp("d.pdf", "GPT-4 Technical Report")) == ""
+    # 分类框里的字不能把日期吃掉，日期也不可能超出月份
+    assert PaperRegistry._arxiv_date(stamp("e.pdf", "arXiv:2310.03294v2 [cs.LG] 31 Mar 2024")) == "2024-03-31"
+
+
+def test_all_caps_title_takes_the_metadata_casing(tmp_path):
+    """版面把标题排成全大写、元数据里是同样字句的正常写法时，用元数据的大小写。
+
+    只换大小写、一个字都不换：两者压平后必须完全相同才动手，
+    否则 1706.03762v7 那种元数据标题（"scholarly works."）就会顶掉真标题。
+    """
+    import pymupdf
+
+    from app.api.registry import PaperRegistry
+
+    def build(name, layout, meta_title):
+        path = tmp_path / name
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((72, 100), layout, fontsize=20)
+        doc.set_metadata({"title": meta_title})
+        doc.save(str(path))
+        doc.close()
+        return path
+
+    caps = build(
+        "caps.pdf",
+        "FSA: AN ALTERNATIVE EFFICIENT IMPLEMENTATION",
+        "FSA: An Alternative Efficient Implementation",
+    )
+    assert PaperRegistry._title(caps, "2508.18224.pdf") == "FSA: An Alternative Efficient Implementation"
+
+    # 元数据是别的东西（真实坑：arXiv v7 的 metadata title 是版权声明）→ 保持版面标题
+    other = build("other.pdf", "ATTENTION IS ALL YOU NEED", "scholarly works.")
+    assert PaperRegistry._title(other, "1706.03762v7.pdf") == "ATTENTION IS ALL YOU NEED"
+
+
+def test_a_title_split_into_many_spans_is_put_back_together():
+    """排版器把一行标题拆成一堆 span 时，标题不能碎掉。
+
+    2310.03294 的标题在 PDF 里就是这样：逐字调字距让 PyMuPDF 断成
+    `D`,`F`,`A`,`:`,`Distributed`,`Memory-efficient`,`Attention`。
+    以前只收"字号恰好等于全页最大值"的 span 再取前三个，拼出来是 `D F A`，
+    短到被判定"不是标题"，标题就掉到 OCR 那一路 —— 而 OCR 吃掉了空格，
+    文献库里于是出现 `DISTFLASHATTN:Distributed Memory-efficientAttention`。
+
+    这里守的是**行内拼 span 不加分隔符**：空格有没有由排版器的字符决定，
+    补一个会把 `Memory-efficient` 拆成 `Memory- efficient`。
+    """
+    from app.api.registry import PaperRegistry
+
+    # 真实的那一行（2310.03294 首页）：大写首字母 14.5、小型大写字母 11.6，
+    # 连空格都是单独的 span
+    line = {
+        "bbox": (108.4, 82.0, 504.0, 96.0),
+        "spans": [
+            {"text": "D", "size": 14.5},
+            {"text": "IST", "size": 11.6},
+            {"text": "F", "size": 14.5},
+            {"text": "LASH", "size": 11.6},
+            {"text": "A", "size": 14.5},
+            {"text": "TTN", "size": 11.6},
+            {"text": ":", "size": 14.5},
+            {"text": " ", "size": 14.5},
+            {"text": "Distributed", "size": 14.5},
+            {"text": " ", "size": 14.5},
+            {"text": "Memory-efficient", "size": 14.5},
+            {"text": " ", "size": 14.5},
+            {"text": "Attention", "size": 14.5},
+        ],
+    }
+    assert PaperRegistry._line_of(line) == (14.5, "DISTFLASHATTN: Distributed Memory-efficient Attention")
+
+    stamp = {"bbox": (0, 0, 1, 1), "spans": [{"text": "arXiv:2310.03294v2 [cs.LG] 31 Mar 2024", "size": 20.0}]}
+    assert PaperRegistry._line_of(stamp) is None, "投稿戳不能当标题的一部分"
+
+
+def test_the_second_title_line_survives_a_slightly_smaller_size(tmp_path):
+    """标题折行时第二行常常小 0.2pt（实测 14.3 对 14.5），不能只取第一行。"""
+    import pymupdf
+
+    from app.api.registry import PaperRegistry
+
+    path = tmp_path / "paper.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 80), "DISTFLASHATTN: Distributed Memory-efficient Attention", fontsize=14.5)
+    page.insert_text((72, 98), "for Long-context LLMs Training", fontsize=14.3)
+    page.insert_text((72, 140), "Abstract", fontsize=12.0)
+    page.insert_text((72, 160), "Body text that is clearly smaller than the title line.", fontsize=10.0)
+    doc.save(str(path))
+    doc.close()
+
+    assert PaperRegistry._title_from_layout(path) == (
+        "DISTFLASHATTN: Distributed Memory-efficient Attention for Long-context LLMs Training"
+    )
+
+
+def test_an_old_sidecar_title_is_recomputed_after_a_rule_change(tmp_path):
+    """标题识别规则修好了，库里那行字也得跟着改。
+
+    否则最坏的情况是：代码修了、测试绿了，而服务器上那份 sidecar 里躺着的
+    还是旧规则算出来的连体字 —— 用户看到的和修之前一模一样。
+    """
+    import json
+
+    import pymupdf
+
+    from app.api.registry import PaperRegistry
+
+    pdf = tmp_path / "abc.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 80), "DISTFLASHATTN: Distributed Memory-efficient Attention", fontsize=14.5)
+    page.insert_text((72, 98), "for Long-context LLMs Training", fontsize=14.3)
+    page.insert_text((72, 140), "Abstract", fontsize=12.0)
+    doc.save(str(pdf))
+    doc.close()
+
+    (tmp_path / "abc.json").write_text(json.dumps({
+        "id": "abc",
+        "filename": "2310.03294.pdf",
+        "title": "DISTFLASHATTN:Distributed Memory-efficientAttention",  # 旧规则算坏的那行
+        "pages": 1,
+        "uploaded_at": "2026-11-07T00:00:00+00:00",
+    }), encoding="utf-8")
+
+    reg = PaperRegistry(tmp_path)
+    assert reg.get("abc").title == (
+        "DISTFLASHATTN: Distributed Memory-efficient Attention for Long-context LLMs Training"
+    )
+    # 修好之后要落盘，不然每次启动都得重算一遍
+    assert json.loads((tmp_path / "abc.json").read_text(encoding="utf-8"))["title_v"] >= 1
+
+
+def test_a_page_without_a_text_layer_is_marked_scanned(tmp_path):
+    import pymupdf
+
+    from app.api.registry import PaperRegistry
+
+    blank = tmp_path / "blank.pdf"
+    doc = pymupdf.open()
+    doc.new_page()
+    doc.save(str(blank))
+    doc.close()
+    assert PaperRegistry._is_scanned(blank) is True
+
+    typed = tmp_path / "typed.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "A real title line with enough characters to count")
+    doc.save(str(typed))
+    doc.close()
+    assert PaperRegistry._is_scanned(typed) is False
+
+
+def test_a_scanned_title_is_read_by_ocr_and_the_glued_words_are_split(
+    tmp_path, monkeypatch
+):
+    """扫描件没有文字层，标题只能靠 OCR 认。
+
+    两个坑都在这条用例里：
+    1. **不能按 size 挑**。OCR 的 size 是行高像素当量，实测邮箱那行比标题还大；
+       稳定的判据是版面宽度 —— 标题是首页上半部分最宽的那行。
+    2. **空格会被吃掉**（AttentionIsAllYouNeed），要按驼峰补回来，
+       否则文献库里那行标题永远是一串连体字。
+    """
+    import pymupdf
+
+    from app.api.registry import PaperRegistry
+    from app.parsing import scan
+
+    blank = tmp_path / "scan.pdf"
+    doc = pymupdf.open()
+    doc.new_page()  # A4 空页：没有文本层，_title_from_layout 只能返回 None
+    doc.save(str(blank))
+    doc.close()
+
+    def line(text, box, size=15.0):
+        return scan.OcrLine(text, box, [scan.OcrWord(text, box)], size)
+
+    fake = [
+        line("AttentionIsAllYouNeed", (212, 100, 392, 116), 16.0),
+        line("AshishVaswani*", (132, 184, 200, 198), 14.0),
+        # 这行的 size 比标题还大 —— 按字号挑就会挑出邮箱
+        line("nikip@google.com", (320, 205, 408, 224), 19.0),
+    ]
+    monkeypatch.setattr(scan, "ocr_enabled", lambda: True)
+    monkeypatch.setattr(scan, "ocr_lines", lambda page, dpi=None: fake)
+
+    assert PaperRegistry._title(blank, "1706.03762v1_scan.pdf") == "Attention Is All You Need"
+
+
+def test_a_scanned_title_never_falls_back_to_the_filename_when_ocr_is_off(
+    tmp_path, monkeypatch
+):
+    """OCR 引擎不可用时就老老实实用文件名，不许编一个出来。"""
+    import pymupdf
+
+    from app.api.registry import PaperRegistry
+    from app.parsing import scan
+
+    blank = tmp_path / "scan.pdf"
+    doc = pymupdf.open()
+    doc.new_page()
+    doc.save(str(blank))
+    doc.close()
+
+    monkeypatch.setattr(scan, "ocr_enabled", lambda: False)
+    assert PaperRegistry._title_from_ocr(blank) is None
+    assert PaperRegistry._title(blank, "1706.03762v1_scan.pdf") == "1706.03762v1_scan"
+
+
+def test_qa_tells_the_reader_when_the_paper_is_a_scan(client, paper_id, monkeypatch):
+    """扫描件的引文是从 OCR 文本里摘的，接口要带上这个标记。
+
+    不带的话，用户对着纸面核对 "we use d d, dode/h 64" 这种识别残渣，
+    只会觉得系统抄错了 —— 其实它抄的正是自己索引里的原文。
+    """
+    from app.api.main import registry
+
+    paper = registry.get(paper_id)
+    assert client.post(
+        f"/api/papers/{paper_id}/qa", json={"question": "attention heads", "mode": "retrieve"}
+    ).json()["scanned"] is False
+
+    monkeypatch.setattr(paper, "scanned", True)
+    body = client.post(
+        f"/api/papers/{paper_id}/qa", json={"question": "attention heads", "mode": "retrieve"}
+    ).json()
+    assert body["scanned"] is True

@@ -163,8 +163,10 @@ def _read_csv_upload(file: UploadFile) -> bytes:
     data = file.file.read(MAX_CSV_BYTES + 1)
     if len(data) > MAX_CSV_BYTES:
         raise HTTPException(413, "CSV 文件超过 5 MB，请先抽样或拆分后再上传。")
+    # 400 而不是 422：这一条的兄弟（二进制文件头、非 UTF-8、列数不齐）都返回 400，
+    # 只有它是 422，前端按状态码分类提示时会被拆成两种"同一种错"。
     if not data:
-        raise HTTPException(422, "上传的 CSV 是空的。")
+        raise HTTPException(400, "上传的 CSV 是空的。")
     for magic in _BINARY_MAGIC:
         if data.startswith(magic):
             raise HTTPException(400, "上传的文件不是 CSV（检测到二进制文件头）。")

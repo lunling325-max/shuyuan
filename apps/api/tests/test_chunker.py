@@ -231,3 +231,97 @@ def test_ocr_hook_returning_none_is_not_fatal(tmp_path):
     """钩子交不出结果（引擎缺失/单页失败）时，这份文档只是没有正文，不该抛异常。"""
     pdf = _scanned_pdf(tmp_path)
     assert chunk_pdf(str(pdf), ocr=lambda page: None) == []
+
+
+# ---------------------------------------------------------------- 扫描件的标题
+# 扫描件没有字体信息：`size` 只能用像素墨迹高度当代理，`bold` 恒为 False。
+# 下面三条守的是"在只有代理值的情况下，什么能当标题、什么不能"。
+
+
+def _ocr_pdf(tmp_path: Path, lines: list[tuple[str, float]]):
+    """造一份无文字层的 PDF，并给一个按行返回 OCR 块的钩子。
+
+    `lines` 是 `(文本, 像素行高)`：行高差就是切块器能看到的那点"字号"信息。
+    """
+    pdf = _scanned_pdf(tmp_path)
+
+    def hook(page) -> dict:
+        blocks = []
+        y = 100.0
+        for text, height in lines:
+            blocks.append(
+                {
+                    "type": 0,
+                    "bbox": (60.0, y, 540.0, y + height),
+                    "lines": [
+                        {
+                            "spans": [
+                                {"text": text, "size": height, "flags": 0, "font": "ocr"},
+                            ]
+                        }
+                    ],
+                }
+            )
+            y += height + 6
+        return {"blocks": blocks}
+
+    return pdf, hook
+
+
+def test_a_section_number_glued_to_its_title_is_still_a_heading(tmp_path):
+    """OCR 会把编号和标题粘成一个词：`7Conclusion` 也得认成一级标题 `7 Conclusion`。
+
+    真实事故：识别出来的扫描件里 `1Introduction`、`2Background`、`7Conclusion`
+    全都没有空格，编号判据要求"编号 + 空白 + 内容"，于是整份论文的章节树
+    只剩零星几节，引用定位全指错。
+    """
+    pdf, hook = _ocr_pdf(
+        tmp_path,
+        [
+            ("7Conclusion", 14.0),
+            ("In this work, we presented the Transformer.", 16.0),
+        ],
+    )
+    chunks = chunk_pdf(str(pdf), ocr=hook)
+    assert [c.section for c in chunks] == ["7 Conclusion"], [c.section for c in chunks]
+
+
+def test_a_title_merged_into_its_paragraph_is_not_a_heading(tmp_path):
+    """标题和下一段正文并成一块时，整块不能当标题。
+
+    真实事故：扫描件的 `3.1 Encoder and Decoder Stacks` 和正文并成了一块，
+    于是目录里出现一条二十个词长的"章节名"。代理字号下判据只能是"尾巴够短"。
+    """
+    pdf, hook = _ocr_pdf(
+        tmp_path,
+        [
+            (
+                "3.1 Encoder and Decoder Stacks Encoder: The encoder is composed of a "
+                "stack of N 6 identical layers. Each layer has two",
+                15.0,
+            ),
+            ("sub-layers. The first is a multi-head self-attention mechanism.", 16.0),
+        ],
+    )
+    chunks = chunk_pdf(str(pdf), ocr=hook)
+    assert not any("3.1" in c.section for c in chunks), [c.section for c in chunks]
+
+
+def test_ocr_line_height_alone_never_makes_a_heading(tmp_path):
+    """扫描件禁用"字号大于正文"这条规则：它量的是墨迹高度，不是字号。
+
+    实测同一份论文（15 页扫描件）：正文行高 13~19pt，真标题行高 13~20pt ——
+    两个区间几乎完全重叠。按它挑标题，既漏掉大半真标题，又把参考文献里的
+    条目行判成标题，整个 References 节被切成七八段。这里给一行"特别高"的
+    文献条目，它必须仍然不是标题。
+    """
+    pdf, hook = _ocr_pdf(
+        tmp_path,
+        [
+            ("References", 16.0),
+            ("[13] Zhongqiang Huang and Mary Harper. Self-training PCFG grammars", 26.0),
+            ("across languages. In Proceedings of EMNLP, 2009.", 13.0),
+        ],
+    )
+    chunks = chunk_pdf(str(pdf), ocr=hook)
+    assert [c.section for c in chunks] == ["References"], [c.section for c in chunks]

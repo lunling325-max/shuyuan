@@ -13,7 +13,7 @@
 | 3 | `evidence` | `{hits: [{chunk_index, page, section, score, preview}]}` | 召回证据 |
 | 4 | `token` | `{text: "<delta>"}` | 逐 token，可能 0..N 个 |
 | 5 | `claims` | `{claims: [{text, status, reason, anchors: [...]}], stats: {supported, weak, unsupported}}` | 校验后的最终结论 |
-| 6 | `done` | `{took_ms}` | 正常结束 |
+| 6 | `done` | `{took_ms, scanned}` | 正常结束；scanned=这份文献是扫描件 |
 | 7 | `error` | `{stage, message}` | 任一阶段失败；**不发 done** |
 
 前端据此区分两种结束方式：收到 `done` 是正常完成；只收到 `error` 是半路挂了，
@@ -139,7 +139,7 @@ async def _event_stream(
 
     # 没有召回等价于只读检索：模型拿不到证据，硬答只会是幻觉。
     if req.mode == "retrieve" or not hits:
-        yield sse("done", {"took_ms": _took_ms(t0)})
+        yield sse("done", {"took_ms": _took_ms(t0), "scanned": paper.scanned})
         return
 
     # 可预判的失败在进入 token 流之前折叠成 error，HTTP 仍然是 200。
@@ -210,7 +210,9 @@ async def _event_stream(
         return
 
     yield sse("claims", claims_payload(verified))
-    yield sse("done", {"took_ms": _took_ms(t0)})
+    # scanned 挂在 done 上而不是 claims 上：它是"这份文献本身"的属性，
+    # 不是校验结果的一部分，前端拿到它才能提示"引文来自 OCR"
+    yield sse("done", {"took_ms": _took_ms(t0), "scanned": paper.scanned})
 
 
 @router.post(

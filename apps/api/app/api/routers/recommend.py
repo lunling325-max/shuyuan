@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import time
 from dataclasses import asdict
 from datetime import date, timedelta
@@ -30,6 +32,12 @@ router = APIRouter()
 CACHE_TTL_SECONDS = 15 * 60
 _CACHE: dict[tuple, tuple[float, arxiv_tool.SearchResult]] = {}
 _feedback = recommender.FeedbackStore(deps.STORE_DIR.parent / "feedback.json")
+
+# 上一次成功刷到的整批候选，落盘一份。内存缓存活不过进程重启，
+# 而"刚打开服务就被限流/断网"正是演示最怕的那一下 —— 有这份文件，
+# 页面至少还能给出上次那批，并注明是几小时前的。
+BATCH_PATH = deps.STORE_DIR.parent / "recommend_batch.json"
+BATCH_TTL_SECONDS = 12 * 3600
 
 
 class MatchOut(BaseModel):
@@ -80,12 +88,55 @@ class VoteOut(BaseModel):
     my_vote: str
 
 
+def _save_batch(result: arxiv_tool.SearchResult) -> None:
+    """把这一批候选原样存下来；写盘失败不影响这次请求。"""
+    payload = {
+        "query": result.query,
+        "saved_at": time.time(),
+        "entries": [asdict(entry) for entry in result.results],
+    }
+    try:
+        BATCH_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = BATCH_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, BATCH_PATH)
+    except OSError:
+        pass
+
+
+def _load_batch() -> tuple[arxiv_tool.SearchResult, int] | None:
+    """返回 (上次那批, 存了多久的秒数)；太旧或读不出来就当作没有。"""
+    try:
+        payload = json.loads(BATCH_PATH.read_text(encoding="utf-8"))
+        age = int(time.time() - float(payload.get("saved_at") or 0))
+        entries = [arxiv_tool.ArxivEntry(**item) for item in payload.get("entries") or []]
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    if not entries or age < 0 or age > BATCH_TTL_SECONDS:
+        return None
+    return (
+        arxiv_tool.SearchResult(
+            query=str(payload.get("query") or ""), results=entries, degraded=False
+        ),
+        age,
+    )
+
+
+def _age_text(seconds: int) -> str:
+    """说人话：几分钟 / 几小时。落盘那份可能存了五小时，别写「312 分钟前」。"""
+    minutes = max(1, seconds // 60)
+    if minutes < 90:
+        return f"{minutes} 分钟前"
+    return f"{minutes // 60} 小时前"
+
+
 def _latest_cached(categories: list[str], fetch_limit: int, fresh: bool):
     """返回 (结果, 是否来自缓存, 缓存龄秒数, 这次失败的说明)。
 
-    失败时退回上一次成功的结果（哪怕已经过期）：arXiv 限流时（实测 429 要等
+    失败时退到上一次成功的结果（哪怕已经过期）：arXiv 限流时（实测 429 要等
     50 秒才回）整页空白是最差的体验，而"这是 8 分钟前刷到的"完全够用 ——
-    推荐页给的是候选论文，不是必须秒级的实时数据。
+    推荐页给的是候选论文，不是必须秒级的实时数据。内存里没有就翻落盘那份，
+    这样重启服务后的第一次刷新失败也不至于白屏。
     """
     key = (tuple(categories), fetch_limit)
     now = time.monotonic()
@@ -96,10 +147,14 @@ def _latest_cached(categories: list[str], fetch_limit: int, fresh: bool):
     result = arxiv_tool.latest(categories, limit=fetch_limit)
     if not result.degraded:
         _CACHE[key] = (now, result)
+        _save_batch(result)
         return result, False, 0, ""
 
     if hit is not None:
         return hit[1], True, int(now - hit[0]), result.note
+    saved = _load_batch()
+    if saved is not None:
+        return saved[0], True, saved[1], result.note
     return result, False, 0, result.note
 
 
@@ -155,7 +210,7 @@ def recommend(
 
     note = failure
     if failure and cached:
-        note = f"{failure}；下面是 {max(1, age // 60)} 分钟前刷到的那批"
+        note = f"{failure}；下面是 {_age_text(age)}刷到的那批"
 
     return RecommendOut(
         categories=cats or ["cs.CL", "cs.LG", "cs.AI", "cs.CV"],

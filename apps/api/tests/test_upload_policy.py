@@ -210,3 +210,67 @@ def test_batch_rejects_too_many_files_before_parsing(env):
 
     assert r.status_code == 413
     assert "20" in r.json()["detail"]
+
+
+@pytest.fixture()
+def v1_reexported(tmp_path) -> Path:
+    """扫描件 v1，但 PDF 导出日期被推到 2099。
+
+    文件名保留了 arXiv 号：扫描件首页没有文字层，arXiv 号只能从文件名认，
+    改名成 "v1_reexported.pdf" 会让它拿不到 arXiv 号，比新旧就退回日期了 ——
+    那样测的就不是这里要测的东西。
+    """
+    import pymupdf
+
+    doc = pymupdf.open(str(PDF_V1))
+    doc.set_metadata({**(doc.metadata or {}), "creationDate": "D:20990101000000Z"})
+    out = tmp_path / "1706.03762v1_reexported.pdf"
+    doc.save(str(out))
+    doc.close()
+    return out
+
+
+def test_version_number_beats_pdf_export_date(env, v1_reexported):
+    """v7 比 v1 新 —— 哪怕 v1 那份是后来重新导出的。
+
+    `created_at` 的本义是"这份 PDF 什么时候导出"，不是"这篇论文什么时候发版"。
+    只看日期的话，把 2017 年的 v1 在 2099 年重导一遍，系统就会建议用 v1 顶掉
+    v7；而版本谱系页对同一对文件写的是"按 arXiv 版本号排序"。两处口径不一致，
+    用户看到的就是自相矛盾的建议 —— 而且照做会删掉真正的新版。
+    """
+    client, _reg = env
+    _upload(client, v1_reexported)
+
+    body = _upload(client, PDF_V7).json()
+
+    assert body["relation"] == "new_version"
+    assert body["recommendation"] == "replace_existing", "v7 才是新版，日期更早不算旧"
+
+
+def test_no_recommendation_when_only_upload_time_differs():
+    """两份都取不到版本号和生成日期：不许凭"谁先传的"建议删任何一份。"""
+    from types import SimpleNamespace
+
+    from app.api.deps import recommend_version
+
+    def paper(uploaded_at: str):
+        return SimpleNamespace(
+            arxiv_id="", arxiv_version=0, created_at="", uploaded_at=uploaded_at
+        )
+
+    old = paper("2020-01-01T00:00:00+00:00")
+    new = paper("2024-01-01T00:00:00+00:00")
+
+    assert recommend_version(new, old) == ("", "")
+    assert recommend_version(old, new) == ("", "")
+
+
+def test_recommendation_says_what_it_was_based_on(env, v1_reexported):
+    """建议后面必须跟着依据：凭版本号判的和凭日期判的，界面文案不一样。"""
+    client, _reg = env
+    _upload(client, v1_reexported)
+
+    body = _upload(client, PDF_V7).json()
+
+    assert body["recommendation"] == "replace_existing"
+    assert body["recommendation_by"] == "arxiv_version"

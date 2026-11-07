@@ -67,6 +67,33 @@ def chat(
         raise LLMError(f"响应结构异常: {json.dumps(data, ensure_ascii=False)[:300]}") from exc
 
 
+_DECODER = json.JSONDecoder()
+
+
+def first_json_object(raw: str) -> dict[str, Any] | None:
+    """从模型的原始输出里取**第一个完整的 JSON 对象**，取不到返回 None。
+
+    为什么不直接 `json.loads(raw)`：实测 DeepSeek 会偶尔在一次回复里吐
+    **两个**对象 —— 先给一个 `call`，紧跟一个措辞略不同的 `call`。
+    `json.loads` 整串解析就报 `Expecting ',' delimiter`，任务 Agent 判定
+    "决策失败"，退回预设计划，最后连结论都不给（E-023）。
+
+    容忍三件事，都实测出现过：两个对象粘在一起、对象后面跟着解释文字、
+    外面套着 ```json 围栏。取第一个就够了：模型想说的那件事总在最前面。
+    """
+    text = raw.strip()
+    for i, ch in enumerate(text):
+        if ch not in "{[":
+            continue
+        try:
+            obj, _end = _DECODER.raw_decode(text, i)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
 def chat_json(
     user: str,
     *,
@@ -76,10 +103,10 @@ def chat_json(
 ) -> dict[str, Any]:
     """结构化输出，返回解析后的 JSON 对象。"""
     raw = chat(user, system=system, temperature=temperature, json_mode=True, model=model)
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise LLMError(f"模型未返回合法 JSON: {raw[:300]}") from exc
+    parsed = first_json_object(raw)
+    if parsed is None:
+        raise LLMError(f"模型未返回合法 JSON: {raw[:300]}")
+    return parsed
 
 
 # ------------------------------------------------------------------ 流式

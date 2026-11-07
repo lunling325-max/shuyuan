@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  溯源 · 科研助手 — 图标
+  含义：放大镜罩在文本行上，镜片里两行字，其中一行被框住。
+        一图说清这个项目的主线 —— 每条结论都能回到原文的那一行。
+  用法：界面里是内联 SVG（底色取主题色），这个文件供 README / 演示视频 /
+        技术文档单独引用。尺寸可任意缩放，32 的整数倍最清晰。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="256" height="256" role="img" aria-label="溯源 · 科研助手">
+  <title>溯源 · 科研助手</title>
+  <rect width="32" height="32" rx="8" fill="#2a78d6"/>
+  <circle cx="13.8" cy="13.8" r="6.1" fill="none" stroke="#fff" stroke-width="2.6"/>
+  <path d="M18.5 18.5L23 23" stroke="#fff" stroke-width="2.9" stroke-linecap="round"/>
+  <path d="M10.9 12.6H16.7" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity=".9"/>
+  <path d="M10.9 15.6H14.7" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity=".55"/>
+</svg>

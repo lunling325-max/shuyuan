@@ -16,6 +16,7 @@ import pytest
 
 from app.references import (
     Reference,
+    _block_texts,
     _by_markers,
     _looks_complete,
     extract_references,
@@ -317,3 +318,37 @@ def test_the_book_cites_three_of_our_library_papers(book_refs):
     ):
         best = max(title_similarity(t, target) for t in titles)
         assert best >= 0.9, f"{target} 没抽出来（最高相似度 {best:.2f}）"
+
+
+def test_ocr_blocks_are_split_per_line_so_reference_markers_survive():
+    """扫描件的块必须按行拆开。
+
+    真实事故：OCR 按行距分块，把相邻两条文献并成一块
+    （`… arXiv, 2014. [3] Denny Britz, …`）。`[n]` 标记必须顶在行首才认得出
+    （正文里的 "see [3]" 不能当标记），并成一块之后 `[3]` 跑到句子中间，
+    由此之后的所有条目一起丢掉 —— 15 页扫描件抽出 19 条，文字版是 36 条。
+    """
+    blocks = [
+        {
+            "type": 0,
+            "lines": [
+                {"spans": [{"text": "arXiv preprint arXiv, 2014. ", "font": "ocr"}]},
+                {"spans": [{"text": "[3] Denny Britz, Anna Goldie. ", "font": "ocr"}]},
+            ],
+        }
+    ]
+    assert _block_texts(blocks) == ["arXiv preprint arXiv, 2014.", "[3] Denny Britz, Anna Goldie."]
+
+
+def test_text_layer_blocks_keep_the_paragraph_the_typesetter_gave_us():
+    """有文字层的块**不拆**：块边界是排版给的，拆了反而会把一条引用切碎。"""
+    blocks = [
+        {
+            "type": 0,
+            "lines": [
+                {"spans": [{"text": "Ashish Vaswani, Noam Shazeer. ", "font": "NimbusRomNo9L-Medi"}]},
+                {"spans": [{"text": "Attention is all you need. 2017.", "font": "NimbusRomNo9L-Medi"}]},
+            ],
+        }
+    ]
+    assert _block_texts(blocks) == ["Ashish Vaswani, Noam Shazeer. Attention is all you need. 2017."]

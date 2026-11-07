@@ -31,6 +31,9 @@ services:
 
     volumes:
       # 上传的 PDF 与 sidecar 落在宿主机 ./data，容器重建不丢。
+      # 属主要对：容器内以 appuser(10001) 运行，宿主机 ./data 若由 root 创建，
+      # 启动时会 PermissionError: '/app/data/papers'（E-020 真踩过）。
+      # 起服务前先：mkdir -p data/papers && chown -R 10001:10001 data
       - ./data:/app/data
       # 可选：启用向量检索（--dense / --hybrid）时再挂本地 ONNX 模型；
       # 不挂也能跑，默认检索路径是纯词法 BM25。

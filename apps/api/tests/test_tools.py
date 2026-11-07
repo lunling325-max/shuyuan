@@ -222,6 +222,11 @@ def test_ingest_download_failure_returns_502(client, store, monkeypatch):
 
 
 def test_repeated_ingest_lands_on_same_content_hash_id(client, store, monkeypatch):
+    """第二次点「入库」不该再下一次。
+
+    以前是照下不误、再靠内容哈希认出重复：实测那次在界面上转了 87.8 秒，
+    下的是同一份 557KB。arXiv 号是精确标识，查一次库就够了。
+    """
     data = PDF_V7.read_bytes()
     calls: list[str] = []
     monkeypatch.setattr(arxiv, "default_fetch", _fake_fetch(data, calls))
@@ -237,12 +242,12 @@ def test_repeated_ingest_lands_on_same_content_hash_id(client, store, monkeypatc
     assert first_body["paper"]["id"] == second_body["paper"]["id"], "同内容必须同 id"
     assert first_body["paper"]["chunks"] > 0
     assert first_body["fetched_bytes"] == len(data)
-    assert second_body["fetched_bytes"] == len(data)
+    assert first_body["already_present"] is False
+    # 第二次：库里已经有，一个字节都不下载，并且说清楚
+    assert second_body["already_present"] is True
+    assert second_body["fetched_bytes"] == 0
     assert len(store.all()) == 1, "重复入库不能在资料库里堆两个副本"
-    assert calls == [
-        "https://arxiv.org/pdf/1706.03762",
-        "https://arxiv.org/pdf/1706.03762",
-    ]
+    assert calls == ["https://arxiv.org/pdf/1706.03762"], "第二次不该再出网"
 
 
 # ------------------------------------------------------------ 下载重试

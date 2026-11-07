@@ -111,7 +111,7 @@ def test_rank_prefers_relevant_and_open_source():
     assert top.matches and top.matches[0].paper_id == "lib1"
     assert "词面重合" in top.reason
     assert "github.com/example/attention" in top.reason
-    assert "今天刚提交" in top.reason
+    assert "今日提交" in top.reason
     assert top.code_url.startswith("https://github.com/")
 
 
@@ -126,7 +126,7 @@ def test_relevance_matches_are_ordered_and_capped():
 def test_empty_library_still_recommends_and_says_why():
     entries = [_entry(title="A New Attention Variant", abstract="attention")]
     ranked = rank(entries, [], today=TODAY, limit=5)
-    assert ranked and "文献库还是空的" in ranked[0].reason
+    assert ranked and "文献库为空" in ranked[0].reason
 
 
 def test_unknown_date_does_not_invent_freshness():
@@ -157,6 +157,20 @@ def test_feedback_store_rejects_unknown_vote(tmp_path):
         FeedbackStore(tmp_path / "f.json").cast("1706.03762", "me", "meh")
 
 
+def test_empty_user_means_this_machine_and_reads_back_its_own_vote(tmp_path):
+    """`user=""` 曾经写进 "local" 却按 "" 读回来，于是按钮永远不亮。
+
+    实测：POST /vote {"user":""} 返回 votes_up=1、my_vote="" ——
+    票记上了，界面却以为你没投。
+    """
+    store = FeedbackStore(tmp_path / "feedback.json")
+    up, down, mine = store.cast("1706.03762", "", "up")
+
+    assert (up, down, mine) == (1, 0, "up")
+    assert store.counts("1706.03762") == (1, 0, "up")
+    assert store.counts("1706.03762", "local") == (1, 0, "up")
+
+
 # ---------------------------------------------------------------- 端点
 
 
@@ -170,6 +184,8 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr(
         recommend_routes, "_feedback", FeedbackStore(tmp_path / "feedback.json")
     )
+    # 落盘那份也要指到 tmp_path，否则测试会污染真实的数据目录
+    monkeypatch.setattr(recommend_routes, "BATCH_PATH", tmp_path / "recommend_batch.json")
     recommend_routes._CACHE.clear()
 
     from fastapi import FastAPI
@@ -261,6 +277,112 @@ def test_failed_refresh_falls_back_to_last_good_batch(client, monkeypatch):
     assert body["degraded"] is True
     assert len(body["items"]) == 1
     assert "分钟前刷到" in body["note"]
+
+
+def test_saved_batch_survives_a_server_restart(client, monkeypatch, tmp_path):
+    """内存缓存活不过进程重启，落盘那份要顶上。
+
+    演示时最常见的坏情况：刚 `uvicorn` 起来、arXiv 正好限流，页面白屏。
+    这里模拟"上次成功过、这次刚重启就失败"：清空内存缓存，只留磁盘文件。
+    """
+    from app.api.routers import recommend as recommend_routes
+    from app.tools import arxiv as arxiv_tool
+
+    good = arxiv_tool.SearchResult(
+        query="cat:cs.CL", degraded=False,
+        results=[_entry("2601.00021", "Self Attention", "self attention transformer",
+                        comment="code: github.com/example/attn")],
+    )
+    bad = arxiv_tool.SearchResult(
+        query="cat:cs.CL", results=[], degraded=True, note="arXiv 追踪失败：限流（HTTP 429）"
+    )
+    monkeypatch.setattr(recommend_routes.arxiv_tool, "latest", lambda *a, **k: good)
+    client.get("/api/recommend")
+    assert (tmp_path / "recommend_batch.json").exists(), "成功那批要落盘"
+    assert not (tmp_path / "recommend_batch.json.tmp").exists(), "不留半截文件"
+
+    recommend_routes._CACHE.clear()          # 进程重启：内存缓存没了
+    monkeypatch.setattr(recommend_routes.arxiv_tool, "latest", lambda *a, **k: bad)
+
+    body = client.get("/api/recommend").json()
+    assert body["degraded"] is True
+    assert [i["arxiv_id"] for i in body["items"]] == ["2601.00021"]
+    assert body["items"][0]["code_url"].endswith("/example/attn"), "字段要原样还原"
+    assert body["cached"] is True
+    assert "分钟前刷到" in body["note"]
+
+
+def test_expired_saved_batch_is_ignored(client, monkeypatch, tmp_path):
+    """超过 12 小时的那批不再冒充"最近"：宁可空着，也别给三天前的。"""
+    import json
+    import time
+
+    from app.api.routers import recommend as recommend_routes
+    from app.tools import arxiv as arxiv_tool
+
+    path = tmp_path / "recommend_batch.json"
+    path.write_text(json.dumps({
+        "query": "cat:cs.CL",
+        "saved_at": time.time() - recommend_routes.BATCH_TTL_SECONDS - 60,
+        "entries": [{
+            "arxiv_id": "2601.00031", "title": "Old", "authors": [],
+            "published": TODAY, "abstract": "", "pdf_url": "", "abs_url": "",
+            "comment": "",
+        }],
+    }), encoding="utf-8")
+
+    bad = arxiv_tool.SearchResult(
+        query="cat:cs.CL", results=[], degraded=True, note="arXiv 追踪失败：超时"
+    )
+    monkeypatch.setattr(recommend_routes.arxiv_tool, "latest", lambda *a, **k: bad)
+
+    body = client.get("/api/recommend").json()
+    assert body["degraded"] is True
+    assert body["items"] == []
+    assert body["cached"] is False
+
+
+def test_old_batch_is_described_in_hours_not_minutes(client, monkeypatch, tmp_path):
+    """五小时前就说「5 小时前」，不写「312 分钟前」。"""
+    import json
+    import time
+
+    from app.api.routers import recommend as recommend_routes
+    from app.tools import arxiv as arxiv_tool
+
+    (tmp_path / "recommend_batch.json").write_text(json.dumps({
+        "query": "cat:cs.CL",
+        "saved_at": time.time() - 5 * 3600,
+        "entries": [{
+            "arxiv_id": "2601.00041", "title": "Older", "authors": [],
+            "published": TODAY, "abstract": "", "pdf_url": "", "abs_url": "",
+            "comment": "",
+        }],
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(recommend_routes.arxiv_tool, "latest", lambda *a, **k: arxiv_tool
+                        .SearchResult(query="cat:cs.CL", results=[], degraded=True,
+                                      note="arXiv 追踪失败：超时"))
+
+    body = client.get("/api/recommend").json()
+    assert "5 小时前刷到" in body["note"]
+    assert "分钟前" not in body["note"]
+
+
+def test_corrupt_saved_batch_does_not_break_the_page(client, monkeypatch, tmp_path):
+    """文件被截断/手改坏了，就当没存过 —— 不能因此 500。"""
+    from app.api.routers import recommend as recommend_routes
+    from app.tools import arxiv as arxiv_tool
+
+    (tmp_path / "recommend_batch.json").write_text('{"entries": [', encoding="utf-8")
+    bad = arxiv_tool.SearchResult(
+        query="cat:cs.CL", results=[], degraded=True, note="arXiv 追踪失败：超时"
+    )
+    monkeypatch.setattr(recommend_routes.arxiv_tool, "latest", lambda *a, **k: bad)
+
+    response = client.get("/api/recommend")
+    assert response.status_code == 200
+    assert response.json()["items"] == []
 
 
 def test_tracking_feed_sorts_by_date_and_does_not_retry():

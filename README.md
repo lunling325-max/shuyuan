@@ -7,18 +7,41 @@
 
 ## 快速开始
 
+前置只有一个：[uv](https://docs.astral.sh/uv/)（一个可执行文件，管 Python 依赖与版本）。
+机器上没装 Python 也行，uv 会自己挑一个。
+
 ```bash
-cd apps/api
-uv sync                                    # 装依赖（走清华镜像）
-cp ../../.env.example ../../.env           # 填 DEEPSEEK_API_KEY
+git clone <本仓库> && cd <仓库目录>
+./scripts/dev.sh          # macOS / Linux / Git Bash
+.\scripts\dev.ps1         # Windows PowerShell
+```
+
+脚本只做四件事：确认 uv 装了 → 没有 `.env` 就从 `.env.example` 造一份 →
+`uv sync` 装依赖（走清华镜像）→ 起服务。打开 <http://127.0.0.1:8017/>，
+前端由同一个进程托管，不用另起。
+
+不想用脚本，就三条命令：
+
+```bash
+cd apps/api && uv sync
+cp ../../.env.example ../../.env           # 里面填 DEEPSEEK_API_KEY
 uv run uvicorn app.api.main:app --reload --port 8017
 ```
 
-打开 <http://127.0.0.1:8017/> —— 前端由同一个服务托管，无需另起进程。
+**不填 key 也能跑。** 没有 `DEEPSEEK_API_KEY` 时服务照常启动，依赖模型的接口返回
+200 + `degraded`：检索、逐条溯源校验、扫描件 OCR、表格与插图解析都还能演示，
+只有"生成中文结论"这一步会降级。这是有意设计——演示现场断网不该白屏。
+
+手边先放几篇 PDF，有两种加进去的办法：
+
+- 界面右上角「＋ 上传 PDF」，一篇篇加；
+- 或者把 PDF 放进仓库根的 `pdf/`，再 `uv run python scripts/seed_demo.py` 批量灌进去。
+
+其它入口：
 
 - `/docs`　自动生成的 OpenAPI 文档
-- 仓库根放一份 PDF 后，在界面点「＋ 上传 PDF」即可解析入库
 - 演示深链：`/?paper=<文献 id>&ask=<问题>` 直接打开某篇并提问
+- 想跑 Docker：见下方「部署与运行（Docker）」，一条 `docker compose up --build -d`
 
 ## 界面
 
@@ -44,7 +67,8 @@ uv run uvicorn app.api.main:app --reload --port 8017
 apps/api/app/
   parsing/     chunker.py      结构感知切块（段落不切开，标题必开新块，去页眉页脚）
                text_index.py   词级索引，给任意引用文本落回页码 + bbox
-               scan.py         扫描件 OCR 钩子（有 Tesseract 才启用）
+               scan.py         扫描件 OCR（RapidOCR）：判扫描页、读序还原、磁盘缓存
+               visuals.py      表格与插图：按行×列还原单元格、抓图注、缩略图重渲染
   retrieval/   bm25.py         词法检索 + 单复数归并 + RRF 融合
                embeddings.py   BGE 的 ONNX 推理（不引 torch）
                dense.py        向量检索（可选通道，见 E-004）
@@ -56,7 +80,7 @@ apps/api/app/
                copilot.py      全库检索 → 编号证据 → 框架 + 真实引用
                review.py       综述生成 + Future Work（证据块先行，引用服务端回填）
   guardrails/  citation.py     三级匹配（逐字 / 截断容错 / 模糊），给出 supported/weak/unsupported
-  agent/       planner.py      两阶段规划 + 动态重规划，9 个可调用工具
+  agent/       planner.py      两阶段规划 + 动态重规划，10 个可调用工具
                registry.py     工具注册表（名称、参数、返回契约）
   analysis/    csv_table.py    CSV 列类型识别 + 统计卡
                chart.py        纯手写 SVG：柱状/折线/散点/雷达，配色烘焙进属性
@@ -87,6 +111,9 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 | GET | `/api/papers/{id}/references` | 参考文献条目（三种版面） |
 | GET | `/api/papers/{id}/file` | 原始 PDF（可 `#page=N` 直达某页） |
 | GET | `/api/papers/{id}/scan` | 扫描件判定与 OCR 状态 |
+| GET | `/api/papers/{id}/tables` | 表格结构化：行×列单元格、标题、Markdown；首次解析逐页找网格线（约 0.29 秒/页，前 40 页），之后走磁盘缓存 |
+| GET | `/api/papers/{id}/figures` | 插图清单：页码、坐标框、图注、原始像素尺寸，`thumb` 指向缩略图 |
+| GET | `/api/papers/{id}/figures/{i}.png` | 按版面重渲染的缩略图（不是原图：原图可能是 CMYK 或 4000px 宽） |
 | POST | `/api/papers/{id}/qa` | 问答，返回结论 + 锚点 + 守卫统计 |
 | POST | `/api/papers/{id}/qa/stream` | 同一链路的 SSE 版本：`meta → queries → evidence → token* → claims → done`，失败只发 `error` 不发 `done` |
 | GET | `/api/papers/{id}/bilingual?chunk=N` | 某个块的中英逐段对照；大模型不可用或段数不符时 `degraded=true`，原文照常返回 |
@@ -120,7 +147,7 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 ## 测试
 
 ```bash
-cd apps/api && uv run pytest -q     # 352 项
+cd apps/api && uv run pytest -q     # 439 项
 ```
 
 覆盖：切块的边界条件、BM25 排序与单复数归并、RRF 去重、守卫的三级匹配、
@@ -147,11 +174,32 @@ Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资
   （编造的替换成 `[未核实]`、大面积编造退回模板）、模型不可用返回 200 + `degraded`、
   导出源码与图共用同一份清洗后数据、错误码分级（400/413/422）。
 - **中译英**：公式/代码/`[n]` 丢了就整段退回原文、段数守恒、超长输入 413、空输入 400。
+- **扫描件 OCR**：扫描页判定与混合文档逐页标注、引擎缺失时如实报不可用而不是假装识别成功、
+  损坏 PDF 退化成报告、竖排投稿戳不许混进正文、同行作者按 x 排、双栏整栏读完再读右栏、
+  模型给的空格原样保留、识别结果落盘后重启仍可用、缓存文件损坏不影响解析、
+  `References` 独立成块（否则整份文献 0 条引文）、编号与标题粘连仍能认出、
+  墨迹高度不许冒充字号、OCR 块按行拆开以保住 `[n]` 标记。
+- **表格与插图**：数字必须留在自己那一格里（`24.6` 不许被拆成 `246` + `.`）、
+  词间空格与小数点碎片分得开、表题在上图题在下且只取标题不吃正文、
+  面积过小的是图标、整页大小的是扫描位图，两头都不要、
+  目录页被误认成 32×3 的表要挡掉、扫描件如实说"提不出来"而不是猜一张网格、
+  缓存坏了重新解析、缩略图必须是 PNG 字节而不是一段 200 的 JSON。
 
 ## 实验记录
 
 所有"哪个方案更好"的结论都带数字，写在 [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md)，
 包括**被数据推翻的假设**（检索式加权、密集检索融合）。没有数字的取舍不写进去。
+
+## 文档索引
+
+| 文件 | 内容 |
+|---|---|
+| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 11 张实机截图（PDF 17 页，`build/TECH.pdf`） |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 24 篇实验记录（E-001–E-024），每条结论带实测数字 |
+| [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
+| [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑与对策） |
+| [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：时间轴、逐段口播、翻车预案；录屏成品 `build/shuyuan-demo.mp4`（6 分 26 秒） |
+| [`docs/print.css`](docs/print.css) | 技术文档打印样式，配 pandoc 导出 PDF（文件头有完整命令） |
 
 ## 配置
 
@@ -160,7 +208,8 @@ Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资
 | `DEEPSEEK_API_KEY` | 必填，生成与检索词扩展 |
 | `DEEPSEEK_BASE_URL` | 可选，默认 `https://api.deepseek.com` |
 | `LLM_MODEL` | 可选，默认 `deepseek-chat` |
-| `PAPER_STORE_DIR` | 可选，PDF 落盘目录，默认 `data/papers` |
+| `PAPER_STORE_DIR` | 可选，PDF 落盘目录，默认 `data/papers`（OCR 缓存跟着放同级 `ocr_cache/`） |
+| `RAG_OCR` | 可选，设 `off` 关掉扫描件识别。关闭时扫描页不会被假装识别成功，接口如实报 `ocr_available=false`（见 `docs/EXPERIMENTS.md` E-018） |
 | `RESEARCH_PROXY` | 可选。默认**直连、不走系统代理**（这台机器的注册表代理会让每次请求多绕一跳，实测直连 1.7 秒、走代理 3 秒起）；填 `system` 用回系统代理，填 `http://host:port` 用指定代理（见 `docs/EXPERIMENTS.md` E-016） |
 | `ARXIV_TLS13` | 可选，设 `1` 就只用默认协议、不退回 TLS 1.2。不设时按主机自动选：连接建不起来就换另一种协议重发一次，哪种成功记住了（见 `docs/EXPERIMENTS.md` E-013、E-016） |
 | `SEMANTIC_SCHOLAR_API_KEY` | 可选。不配时 Semantic Scholar 作为一个来源会被限流（429），界面如实标注「暂不可用」，其余来源不受影响 |
@@ -169,9 +218,9 @@ Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资
 
 ## 部署与运行（Docker）
 
-> 说明：仓库提供了 `Dockerfile`、`.dockerignore`、`docker-compose.yml` 与 `.env.example`，
-> 但提交时**没有在本机实际执行 `docker build`**（本机不联网、不拉镜像）。
-> 以下命令按标准 Docker / Compose 行为编写，首次在评审环境构建时请以实际输出为准。
+> 说明：仓库提供了 `Dockerfile`、`.dockerignore`、`docker-compose.yml` 与 `.env.example`。
+> 云服务器（阿里云 ECS · Ubuntu 22.04）上的完整步骤见 **[docs/DEPLOY.md](docs/DEPLOY.md)**——
+> 从放行端口到 `docker compose up -d --build`，命令可以直接复制。
 
 ### 构建与启动（推荐 Compose）
 

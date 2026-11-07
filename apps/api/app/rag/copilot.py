@@ -19,11 +19,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Sequence
 
 from app.parsing.chunker import Chunk
+from app.rag.evidence import body_chunks, is_reference_list
 from app.rag.query import expand_query, retrieve
+from app.rag.works import one_version_per_work
 
 if TYPE_CHECKING:  # 只为类型标注，避免 rag 层在运行时反向依赖 HTTP 层
     from app.api.registry import Paper
@@ -96,6 +98,10 @@ def collect_evidence(
     if llm_call is None:
         from app.llm.client import chat_json as llm_call
 
+    # 同一篇的多个版本只占一个名额：否则库里三版 Transformer 会把
+    # "能引用的原文"占满，框架看起来有十条依据，其实全出自同一篇。
+    papers = one_version_per_work(papers)
+
     # 跨语言检索必须扩词；扩词失败时 expand_query 会退回原始 idea，不会抛异常
     queries = expand_query(idea, llm_call=llm_call)
 
@@ -114,13 +120,20 @@ def collect_evidence(
         except Exception:  # noqa: BLE001 —— 单篇索引坏了不该拖垮整个 Copilot
             continue
         for hit in hits:
+            if is_reference_list(hit.chunk):
+                # 引文行当证据的后果是实实在在的：实测引到过 FSA 第 12 页的一条书目，
+                # 正文写着 "Vaswani et al., Attention is all you need" ——
+                # 那段话根本不是 FSA 说的，是 FSA 转引的别人。
+                continue
             candidates.append((hit.score, paper.id, hit.chunk.index, paper, hit.chunk))
 
     if not candidates:
-        # 0 召回（通常是断网导致扩词失败）：退回每篇论文的首块做演示兜底
+        # 0 召回（通常是断网导致扩词失败）：退回每篇论文的第一块正文做演示兜底。
+        # 取首块是不够的 —— 首块通常是第 1 页的标题和作者名单，列十条等于没说。
         for paper in papers:
             if paper.chunks:
-                candidates.append((0.0, paper.id, paper.chunks[0].index, paper, paper.chunks[0]))
+                chunk = body_chunks(paper.chunks, 1)[0]
+                candidates.append((0.0, paper.id, chunk.index, paper, chunk))
             if len(candidates) >= limit:
                 break
 
@@ -241,9 +254,18 @@ def build_outline(
 
     # references 只收被真正引用到的编号，并按编号去重
     cited = sorted({n for section in outline for point in section.points for n in point.evidence})
+
+    # 收完要**重新编号成 1..K**。直接留着原编号就会出现 [1][2][3][5][6] 这种跳号 ——
+    # 实测第 4 块确实检索到了、但模型一条要点都没引用它，于是列表里凭空少一个号，
+    # 读者第一反应是"第 4 条被系统丢了"。编号只在这一次响应内有意义，
+    # 重排不影响任何回链（回链靠 paper_id + page，不靠编号）。
+    remap = {old: i for i, old in enumerate(cited, start=1)}
+    for section in outline:
+        for point in section.points:
+            point.evidence = [remap[n] for n in point.evidence]
     return OutlineResult(
         idea=idea,
         outline=outline,
-        references=[by_n[n] for n in cited],
+        references=[replace(by_n[old], n=remap[old]) for old in cited],
         degraded=False,
     )

@@ -32,6 +32,7 @@ from app.api.deps import (
     anchor_out,
     evidence_out,
     get_paper,
+    order_versions,
     paper_out,
     registry,
 )
@@ -179,12 +180,12 @@ def _ingest(data: bytes, filename: str) -> tuple[Paper, bool]:
     删掉的就是用户早就传好的那篇。
     """
     if not data:
-        raise HTTPException(400, "文件是空的")
+        raise HTTPException(400, "文件内容为空")
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"文件超过 {MAX_UPLOAD_BYTES // 1024 // 1024}MB 上限")
     # 只认 PDF 魔数：扩展名可以随便改，文件头不能
     if not data.lstrip()[:5].startswith(b"%PDF"):
-        raise HTTPException(400, "这不是 PDF 文件")
+        raise HTTPException(400, "该文件不是 PDF")
 
     identical = registry.lookup(data) is not None
     try:
@@ -193,14 +194,32 @@ def _ingest(data: bytes, filename: str) -> tuple[Paper, bool]:
         raise HTTPException(422, f"PDF 解析失败：{exc}") from exc
 
     if not paper.chunks:
-        # 抽不到正文时别只说"可能是扫描件"：诊断一次，把"几页没有文字层、
-        # 本机能不能 OCR"直接写进错误里，用户才知道下一步该做什么
+        # 走到这里说明解析**已经跑完了**，扫描页该 OCR 的也认过了。
+        # 所以不能照抄 `analyze()` 的 note —— 那句写的是"解析时会自动识别"，
+        # 而解析刚刚结束、仍然什么都没抽到，用户会被这句假承诺带着反复重传。
         from app.parsing.scan import analyze
 
         report = analyze(str(paper.path))
         registry.remove(paper.id)  # 空文档没必要留在库里（三处一起删）
-        raise HTTPException(422, f"这份 PDF 里没有抽到可用的正文。{report.note}")
+        raise HTTPException(422, _empty_body_reason(report))
     return paper, identical
+
+
+def _empty_body_reason(report) -> str:
+    """「什么都没抽到」要说清是哪一种空，否则用户不知道该不该重试。"""
+    scanned = len(report.scanned_pages)
+    if not scanned:
+        # 有文字层却切不出块：这不是扫描件问题，别让人误以为是 OCR 没开
+        return f"该 PDF 含文字层，但未能切分出正文段落。{report.note}"
+    if report.ocr_available:
+        return (
+            f"共 {report.pages} 页，其中 {scanned} 页缺少文字层，已用 OCR 逐页识别过，"
+            "但仍没有可用的文字（常见于空白页、整页图片或纯图表页）。"
+        )
+    return (
+        f"共 {report.pages} 页，其中 {scanned} 页缺少文字层，本机没有可用的 OCR 引擎，"
+        "这些页面无法识别。执行一次 `uv sync` 可连同 RapidOCR 一并安装，安装完成后重新上传即可。"
+    )
 
 
 @app.post("/api/papers", response_model=PaperOut, status_code=201)
@@ -311,12 +330,12 @@ def delete_paper(paper_id: str) -> Response:
     try:
         registry.remove(paper_id)
     except PaperNotFound as exc:
-        raise HTTPException(404, f"没有这篇文献：{paper_id}") from exc
+        raise HTTPException(404, f"库内不存在该文献：{paper_id}") from exc
     except PaperBusy as exc:
         # 409 而不是 500：这是"稍后再试"（关掉正在看这份 PDF 的阅读器/预览器），
         # 不是服务器坏了。库里的状态没有被改动，用户可以直接重试。
         raise HTTPException(
-            409, "这份 PDF 正被别的程序占用（预览器、杀毒扫描都可能导致），稍后重试删除"
+            409, "该 PDF 正被其他程序占用（预览器、杀毒软件扫描均可能导致），请稍后重试删除"
         ) from exc
     return Response(status_code=204)
 
@@ -400,18 +419,29 @@ def get_file(paper_id: str):
 
 @app.get("/api/papers/{paper_id}/compare/{other_id}", response_model=CompareOut)
 def compare(paper_id: str, other_id: str, summarize: bool = True) -> CompareOut:
-    """两版差异。谁新谁旧**按 PDF 生成日期判**，不按上传顺序、不按文件名。"""
+    """两版差异。谁新谁旧按 arXiv 版本号 → PDF 生成日期 → 上传时间依次判。
+
+    早先只看 `created_at`：扫描件没有元数据日期，`created_at` 是空串，
+    于是退回上传时间 —— 后传上去的 v1 扫描件被判成"更新的一版"，
+    方向整个反了。同一篇有 vN 的时候，vN 才是能站的依据。
+    """
     a, b = _get(paper_id), _get(other_id)
     if a.id == b.id:
-        raise HTTPException(400, "两份是同一个文件，没什么可比的")
+        raise HTTPException(400, "两份为同一文件，无需对比")
 
-    old, new = (a, b) if (a.created_at or a.uploaded_at) <= (b.created_at or b.uploaded_at) else (b, a)
+    old, new, order_by = order_versions(a, b)
     relation = classify(jaccard(old.fingerprint, new.fingerprint))
     diff = diff_versions(old.path, new.path)
+    ocr_side = (
+        "both" if old.scanned and new.scanned
+        else "old" if old.scanned
+        else "new" if new.scanned
+        else ""
+    )
 
     summary = DiffSummary(items=[], ok=True)
     if summarize:
-        summary = summarize_diff(diff)
+        summary = summarize_diff(diff, ocr_side=ocr_side)
 
     return CompareOut(
         old=_paper_out(old),
@@ -423,6 +453,8 @@ def compare(paper_id: str, other_id: str, summarize: bool = True) -> CompareOut:
         summary=[DiffSummaryItem(**it) for it in summary.items],
         summary_ok=summary.ok,
         summary_note=summary.reason,
+        order_by=order_by,
+        ocr_side=ocr_side,
     )
 
 
@@ -444,6 +476,7 @@ def ask(paper_id: str, req: QARequest) -> AnswerOut:
             stats=StatsOut(),
             took_ms=int((time.perf_counter() - t0) * 1000),
             mode="retrieve",
+            scanned=paper.scanned,
         )
 
     from app.llm.client import LLMError
@@ -475,6 +508,7 @@ def ask(paper_id: str, req: QARequest) -> AnswerOut:
         stats=StatsOut(**stats),
         took_ms=int((time.perf_counter() - t0) * 1000),
         mode="answer",
+        scanned=paper.scanned,
     )
 
 
@@ -522,6 +556,7 @@ from app.api.routers import review as review_routes  # noqa: E402
 from app.api.routers import stream as stream_routes  # noqa: E402
 from app.api.routers import tools as tool_routes  # noqa: E402
 from app.api.routers import translate as translate_routes  # noqa: E402
+from app.api.routers import visuals as visual_routes  # noqa: E402
 
 app.include_router(tool_routes.router)
 app.include_router(recommend_routes.router)
@@ -530,6 +565,7 @@ app.include_router(agent_routes.router)
 app.include_router(dataviz_routes.router)
 app.include_router(stream_routes.router)
 app.include_router(translate_routes.router)
+app.include_router(visual_routes.router)
 
 
 # 静态前端放在最后挂载：/api 与 /docs 先匹配，剩下的才交给静态文件

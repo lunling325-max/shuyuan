@@ -22,6 +22,10 @@ import pymupdf
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 
+# 一页文字层去掉空白后不足这么多字符，就当它是扫描页、改走 OCR。
+# 与 `scan.MIN_PAGE_TEXT_CHARS` 是同一个数，理由见 `_page_words`。
+MIN_PAGE_TEXT_CHARS = 30
+
 # U+FB00–FB06 连字：不做映射的话，某种 PDF 生成器输出的 "ﬁrst" 会变成 "rst"
 _LIGATURE_MAP = str.maketrans(
     {
@@ -46,12 +50,32 @@ def split_tokens(text: str) -> list[str]:
     return TOKEN_RE.findall(normalize(text))
 
 
+def _page_words(page) -> list:
+    """取一页的词流：有文字层就用 PDF 自己的，没有就退到 OCR。
+
+    判据与 `scan.analyze` 同口径（去空白后 ≥30 个字符算有文字层），
+    保证"检测时说这页是扫描件"和"索引时真的去 OCR"是同一件事 ——
+    两处各写一个阈值，迟早会出现"检测说扫描件、索引却按空页处理"。
+    """
+    words = page.get_text("words")
+    if len("".join(w[4] for w in words)) >= MIN_PAGE_TEXT_CHARS:
+        return words
+
+    from app.parsing import scan  # 延迟导入：本模块被 chunker 依赖，放到顶层会绕回去
+
+    return scan.ocr_words(page) or words
+
+
 @dataclass(frozen=True, slots=True)
 class Token:
     text: str  # 归一化后的 token
     raw: str  # 原文词形，用于回显
     page: int  # 1-based 页码
     rect: tuple[float, float, float, float]  # x0, y0, x1, y1（pt）
+    # 同一个原文词切出来的 token 共用一个编号。回显时同一编号只拼一次 ——
+    # 否则 "Self-attention" 切成 self/attention 两个 token，两个都带着整串 raw，
+    # 引用框里就读成 "Self-attention, Self-attention, …"（实测自注意力那篇全是这样）
+    word_id: int = -1
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,14 +99,24 @@ class TextIndex:
         self.tokens: list[Token] = []
         self._postings: dict[str, list[int]] = defaultdict(list)
 
+        word_no = 0
+
         def emit(raw: str, page_no: int, rect: tuple[float, float, float, float]) -> None:
+            nonlocal word_no
+            word_no += 1
             for piece in split_tokens(raw):
                 pos = len(self.tokens)
-                self.tokens.append(Token(text=piece, raw=raw, page=page_no, rect=rect))
+                self.tokens.append(
+                    Token(text=piece, raw=raw, page=page_no, rect=rect, word_id=word_no)
+                )
                 self._postings[piece].append(pos)
 
         doc = pymupdf.open(pdf_path)
         for page_no, page in enumerate(doc, start=1):
+            # 扫描页的文字层是空的，"从空里找不到锚点"等于抗幻觉在扫描件上全线失效。
+            # 所以这一页没有文字层时改走 OCR 的词流 —— 坐标是识别出来的，会偏，
+            # 但"这段确实在原文里"这个判断仍然成立，高亮框也还落在附近的字上。
+            words = _page_words(page)
             # 行尾断词必须在这里接上，否则索引和切块器说的不是同一种话：
             # PDF 原文是 `In addi-` / `tion to the masked …`，索引会得到
             # ["addi","tion"]，而切块器已经把这块文本修成了 "addition" ——
@@ -90,7 +124,7 @@ class TextIndex:
             # 于是**真的引用被判成幻觉**（实测 BERT 上三条结论全挂）。
             # 接法与 `chunker._join_lines` 保持一致：连字符 + 小写开头才接。
             pending: tuple[str, tuple[float, float, float, float]] | None = None
-            for word in page.get_text("words"):
+            for word in words:
                 x0, y0, x1, y1, raw = word[0], word[1], word[2], word[3], word[4]
                 if pending is not None:
                     prev_raw, (px0, py0, px1, py1) = pending
@@ -216,11 +250,18 @@ class TextIndex:
         y0 = min(t.rect[1] for t in span)
         x1 = max(t.rect[2] for t in span)
         y1 = max(t.rect[3] for t in span)
+        # 一个原文词切出的多个 token 只回显一次，否则 "self-attention" 会被拼两遍
+        words: list[str] = []
+        last_word = -1
+        for t in span:
+            if t.word_id != last_word:
+                words.append(t.raw)
+                last_word = t.word_id
         return Anchor(
             page=span[0].page,
             rect=(x0, y0, x1, y1),
-            source_text=" ".join(t.raw for t in span),
+            source_text=" ".join(words),
             exact=exact,
-            similarity=round(similarity, 4),
+            similarity=round(similarity, 6),
             token_span=(start, start + n),
         )

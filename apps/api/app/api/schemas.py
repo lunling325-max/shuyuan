@@ -50,6 +50,9 @@ class AnswerOut(BaseModel):
     stats: StatsOut
     took_ms: int
     mode: str = Field(description="answer=走了大模型；retrieve=只返回召回证据")
+    # 这篇是扫描件：引文是从 OCR 文本里摘的，个别字符可能与纸面不同，
+    # 界面上必须说清楚 —— 否则用户会以为论文原文就长这样
+    scanned: bool = False
 
 
 class PaperOut(BaseModel):
@@ -60,6 +63,13 @@ class PaperOut(BaseModel):
     chunks: int
     uploaded_at: str
     created_at: str = Field(default="", description="PDF 元数据里的生成日期，可能为空")
+    arxiv_id: str = Field(default="", description="如 1706.03762（不带版本号）")
+    arxiv_version: int = Field(default=0, description="arXiv 的 vN；0 表示取不到，不是 v1")
+    arxiv_date: str = Field(
+        default="",
+        description="首页投稿戳上的日期 YYYY-MM-DD（≠ PDF 生成日期，arXiv GenPDF 不写元数据日期）",
+    )
+    scanned: bool = Field(default=False, description="首页没有文本层，内容来自 OCR")
     # 只在"刚上传"的响应里填：和库里哪一篇撞了、有多像
     duplicate_of: str | None = None
     duplicate_title: str | None = None
@@ -69,6 +79,11 @@ class PaperOut(BaseModel):
     # 空串的含义是"不知道"，不是"一样新" —— 前端不许把空串当成"保留现有"。
     recommendation: str = Field(
         default="", description="keep_existing | replace_existing | '' (无法判断)"
+    )
+    # 依据要和建议一起回去：前端得照着依据说话。凭版本号判的和凭日期判的
+    # 不能共用一句文案 —— v7 顶掉 v1 时说成"日期更晚"，而 v1 恰好是后导出的。
+    recommendation_by: str = Field(
+        default="", description="判定依据：arxiv_version | date | '' (无法判断)"
     )
 
 
@@ -113,6 +128,11 @@ class CompareOut(BaseModel):
     summary: list[DiffSummaryItem]
     summary_ok: bool = Field(description="False 表示大模型不可用，summary 为空不是“没差异”")
     summary_note: str = Field(default="", description="摘要没生成时的原因，直接展示给用户")
+    # 新旧是怎么判出来的：arxiv_version | date | uploaded_at。前端按它选措辞，
+    # 别把"上传得晚"说成"版本更新"。
+    order_by: str = Field(default="", description="arxiv_version | date | uploaded_at")
+    # 有一侧是扫描件：字符级差异里混着 OCR 识别的误差，不能当成作者改动
+    ocr_side: str = Field(default="", description="old | new | both —— 哪一侧是扫描件")
 
 
 class GraphNodeOut(BaseModel):

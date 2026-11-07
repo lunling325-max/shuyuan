@@ -242,7 +242,10 @@ def _search_semanticscholar(
         data = _fetch_json(url, headers=headers or None, fetch=fetch)
     except OSError as exc:  # 429 在 urllib 里是 HTTPError，属于 OSError
         if "429" in str(exc):
-            raise RuntimeError("限流（未配 SEMANTIC_SCHOLAR_API_KEY）") from exc
+            # 不带 key 也能查，但配额是全站共享的，从机房 IP 出去几乎必然被限流。
+            # 这句话是给运维看的，不是给终端用户看的 —— 所以要把"怎么解决"写进去。
+            key_note = "" if _s2_api_key() else "：未配 SEMANTIC_SCHOLAR_API_KEY，公共配额已被占满"
+            raise RuntimeError(f"限流（429）{key_note}；配 key 后为 1 次/秒") from exc
         raise
     hits: list[Hit] = []
     for paper in data.get("data") or []:

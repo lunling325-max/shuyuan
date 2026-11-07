@@ -19,7 +19,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from app.api.registry import Paper, PaperNotFound, PaperRegistry
+from app.api.registry import Paper, PaperNotFound, PaperRegistry, order_versions
 from app.api.schemas import AnchorOut, EvidenceOut, PaperOut
 from app.retrieval.bm25 import Hit
 from app.versioning import Relation
@@ -32,19 +32,28 @@ WEB_DIR = ROOT / "apps" / "web"
 registry = PaperRegistry(STORE_DIR)
 
 
-def recommend_version(new: Paper, old: Paper) -> str:
-    """两份 PDF 谁更新：只看生成日期，取不到就说不知道。
+def recommend_version(new: Paper, old: Paper) -> tuple[str, str]:
+    """这次上传的这份该不该顶掉库里那份 —— 判据直接复用 `order_versions`。
 
-    为什么不用文件名里的 v1/v7：那是作者自己写的，不保证单调
-    （有人 v2 之后又发了 v1.1，也有人在文件名里编号和内容无关）。
-    两份日期都取不到时返回空串 —— 猜错了会把用户手里更新的版本删掉。
+    以前这里只看 PDF 元数据里的生成日期，而版本谱系页用的是 arXiv 版本号，
+    于是同一对文件在两个页面上会给出相反的结论。比如库里存着 v2、用户新传
+    一份 v7，但 v7 那份是早些时候导出的、v2 是后来重导的 —— 版本谱系说 v7
+    是新版，上传页却建议"保留库里那份"，两个结论摆在一起没法解释。
+
+    `created_at` 的本义是"这份 PDF 什么时候导出的"，不是"这篇论文什么时候
+    发版的"：谁把 2017 年的旧稿在 2024 年重新导出一遍，日期反而更"新"。
+
+    判据只落到上传时间时返回空串 —— 那只说明"谁先传的"，据此建议删哪一份
+    都是猜，而猜错删掉的是用户手里唯一的那份。
+
+    返回值是 `(建议, 依据)`：依据一并回给前端，因为界面要照着它说话 ——
+    "版本号更高"和"PDF 生成日期更晚"是两回事，同一个建议用错依据就变成假话
+    （v7 顶掉 v1，但 v1 那份是后来重导的，说"日期更晚"就与事实相反）。
     """
-    if new.created_at and old.created_at:
-        if new.created_at > old.created_at:
-            return "replace_existing"
-        if new.created_at < old.created_at:
-            return "keep_existing"
-    return ""
+    older, _newer, by = order_versions(new, old)
+    if by == "uploaded_at":
+        return "", ""
+    return ("replace_existing" if older is old else "keep_existing"), by
 
 
 def paper_out(p: Paper, dup: tuple[Paper, Relation] | None = None) -> PaperOut:
@@ -56,6 +65,10 @@ def paper_out(p: Paper, dup: tuple[Paper, Relation] | None = None) -> PaperOut:
         chunks=len(p.chunks),
         uploaded_at=p.uploaded_at,
         created_at=p.created_at,
+        arxiv_id=p.arxiv_id,
+        arxiv_version=p.arxiv_version,
+        arxiv_date=p.arxiv_date,
+        scanned=p.scanned,
     )
     if dup is not None:
         other, relation = dup
@@ -63,7 +76,7 @@ def paper_out(p: Paper, dup: tuple[Paper, Relation] | None = None) -> PaperOut:
         out.duplicate_title = other.title
         out.relation = relation.kind
         out.similarity = relation.similarity
-        out.recommendation = recommend_version(p, other)
+        out.recommendation, out.recommendation_by = recommend_version(p, other)
     return out
 
 
@@ -98,4 +111,4 @@ def get_paper(paper_id: str) -> Paper:
     try:
         return registry.get(paper_id)
     except PaperNotFound as exc:
-        raise HTTPException(404, f"没有这篇文献：{paper_id}") from exc
+        raise HTTPException(404, f"库内不存在该文献：{paper_id}") from exc

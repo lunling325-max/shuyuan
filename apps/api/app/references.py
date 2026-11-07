@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pymupdf
 
-from app.parsing.chunker import ARXIV_STAMP, Chunk
+from app.parsing.chunker import ARXIV_STAMP, Chunk, page_needs_ocr
 
 # 数字标记或字母键，必须顶到行首，否则正文里的 "see [3]" 也会被切开
 _MARKED = re.compile(r"(?m)^\s*\[(\d{1,3}|[A-Za-z][A-Za-z0-9+]{1,10})\]\s*")
@@ -214,7 +214,39 @@ def _by_paragraphs(blob: str) -> list[tuple[str, str]]:
     return [(str(i), e) for i, e in enumerate(entries, start=1)]
 
 
-def _page_blocks(path: str | Path, first: int, last: int) -> str:
+def _is_ocr_block(block: dict) -> bool:
+    for line in block.get("lines", []):
+        for span in line.get("spans", []):
+            if span.get("text", "").strip():
+                return span.get("font") == "ocr"
+    return False
+
+
+def _block_texts(blocks: list[dict]) -> list[str]:
+    """把 `get_text("dict")` 那种结构的块拍平成文本行。
+
+    OCR 块按**行**拆，而不是按块：OCR 的分块是按行距猜的，实测会把相邻两条
+    文献并成一块（`… arXiv, 2014. [3] Denny Britz, …`），而 `[n]` 标记必须
+    顶到行首才认（正文里的 "see [3]" 不能当标记）。真实后果：15 页扫描件的
+    40 条文献只切出 19 条。文字层里 PDF 自带的块边界是排版给的，照用即可。
+    """
+    out: list[str] = []
+    for block in blocks:
+        if block.get("type") != 0:
+            continue
+        lines = [
+            "".join(span.get("text", "") for span in line.get("spans", []))
+            for line in block.get("lines", [])
+        ]
+        pieces = lines if _is_ocr_block(block) else [" ".join(lines)]
+        for piece in pieces:
+            text = " ".join(piece.split())
+            if text:
+                out.append(text)
+    return out
+
+
+def _page_blocks(path: str | Path, first: int, last: int, *, ocr=None) -> str:
     """把参考文献所在页的段落块拼起来，从 "References" 标题处截断。
 
     为什么不直接拼切块文本？因为切块是按 token 预算切的，**会从条目中间切一刀**。
@@ -223,14 +255,22 @@ def _page_blocks(path: str | Path, first: int, last: int) -> str:
     换成页面段落块之后是 196 块，引用齐全。
 
     切块只用来**定位页码范围**，正文内容一律回原文取。
+
+    `ocr` 是可选钩子，和切块器用的是同一个：扫描页的文字层是空的，
+    原样读只会得到 0 个块，然后"有关键词标题、却一条引文都抽不出来"。
     """
     doc = pymupdf.open(str(path))
     try:
         parts: list[tuple[int, str]] = []
         for pno in range(first, last + 1):
-            for block in doc[pno - 1].get_text("blocks"):
-                text = " ".join(block[4].split())
-                if not text or len(text) < 3 or ARXIV_STAMP.match(text):
+            page = doc[pno - 1]
+            blocks = page.get_text("dict")["blocks"]
+            if ocr is not None and page_needs_ocr(blocks):
+                ocr_blocks = ocr(page)
+                if ocr_blocks:
+                    blocks = ocr_blocks.get("blocks", [])
+            for text in _block_texts(blocks):
+                if len(text) < 3 or ARXIV_STAMP.match(text):
                     continue
                 parts.append((pno, text))
     finally:
@@ -263,11 +303,14 @@ def _page_blocks(path: str | Path, first: int, last: int) -> str:
     return "\n\n".join(texts)
 
 
-def extract_references(chunks: list[Chunk], path: str | Path | None = None) -> list[Reference]:
+def extract_references(
+    chunks: list[Chunk], path: str | Path | None = None, *, ocr=None
+) -> list[Reference]:
     """从切块结果（与其对应 PDF）里取参考文献条目。没有 References 节就返回空列表。
 
     给了 `path` 就从原文页面段落块切（推荐，见 `_page_blocks` 的原因）；
     没给就退回拼切块文本 —— 那条路会被切块边界切断条目，只作为兜底。
+    `ocr` 见 `_page_blocks`。
     """
     # 论文写 References，教材写 Bibliography —— 只认前者的话，541 页的书在图上一条出边都没有
     ref_chunks = [
@@ -282,6 +325,7 @@ def extract_references(chunks: list[Chunk], path: str | Path | None = None) -> l
             path,
             min(c.page_start for c in ref_chunks),
             max(c.page_end for c in ref_chunks),
+            ocr=ocr,
         )
     else:
         blob = "\n\n".join(c.text for c in ref_chunks)

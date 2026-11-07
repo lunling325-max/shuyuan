@@ -149,7 +149,26 @@ class VersionDiff:
         return {**counts, "trivial_dropped": self.trivial_dropped}
 
 
-def load_sentences(path: str | Path, *, annotate: bool = True) -> list[Sentence]:
+def _page_text(page, *, ocr: bool) -> str:
+    """一页的正文。没有文字层的扫描页退到 OCR —— 否则比对会把整篇当成"全新内容"。
+
+    踩过的坑：扫描件和它的文本版对比，diff 给出的是"新增 50 句、删除 0 句"。
+    原因不在对齐算法，而在这一行原来只读文字层：扫描件读出来是空串，
+    于是另一版的每一句都成了新增。用户看到的是"作者一次性重写了整篇"。
+    """
+    text = page.get_text()
+    if len(text.strip()) >= 20 or not ocr:
+        return text
+    try:
+        from app.parsing.scan import ocr_lines
+
+        lines = ocr_lines(page)  # 切块时已经识别过，这里基本是磁盘缓存命中
+    except Exception:  # noqa: BLE001 —— 识别不了就当这页没有正文，别拖垮对比
+        return text
+    return "\n".join(line.text for line in lines) or text
+
+
+def load_sentences(path: str | Path, *, annotate: bool = True, ocr: bool = True) -> list[Sentence]:
     """按阅读顺序抽句子，并标上它属于哪一节。
 
     句子本身不带章节信息，但"改了哪一节"才是读者要的答案。
@@ -161,7 +180,7 @@ def load_sentences(path: str | Path, *, annotate: bool = True) -> list[Sentence]
     out: list[Sentence] = []
     try:
         for pno, page in enumerate(doc, start=1):
-            for raw in _SENT_SPLIT.split(page.get_text()):
+            for raw in _SENT_SPLIT.split(_page_text(page, ocr=ocr)):
                 # 投稿戳带版本号和日期，两版必然不同 —— 留着它，
                 # 每份 PDF 都会凭空多出一条"删除 arXiv:... "的假改动
                 text = " ".join(ARXIV_STAMP.sub(" ", raw).split())
@@ -196,9 +215,27 @@ def load_sentences(path: str | Path, *, annotate: bool = True) -> list[Sentence]
 TRIVIAL_RATIO = 0.90  # 高于此值只算措辞微调（标点、大小写、脚注位置）
 MATCH_RATIO = 0.50  # 低于此值就认为两句毫无关系，一个是新增、一个是删除
 
+# 一个变更块最多做多少次句对比较。块内句对是 O(n·m)，而"块内句数 < 50"
+# 这个假设只在"同一篇论文的两个版本"里成立：实测拿一本 550 页的书（11247 句）
+# 去比一篇 6 页论文（348 句），SequenceMatcher 只给出一个 342×10737 的整块，
+# 逐句配对要算 367 万次相似度，接口跑了两分钟还没返回。超过预算就整块处理。
+MAX_REFINE_PAIRS = 25_000
+
 
 def _ratio(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, normalize(a), normalize(b), autojunk=False).ratio()
+
+
+def _ratio_bound(len_a: int, len_b: int) -> float:
+    """相似度的严格上界：ratio = 2M/T ≤ 2·min(la,lb)/(la+lb)。
+
+    先比长度再比内容，能把"整本书对上一句话"这类句对直接排除掉 ——
+    上界够不到 MATCH_RATIO 的，算出来也一定不够。
+    """
+    total = len_a + len_b
+    if total == 0:
+        return 1.0
+    return 2.0 * min(len_a, len_b) / total
 
 
 def _refine(
@@ -212,9 +249,16 @@ def _refine(
     做法是两边句子做一次贪心最优配对（块内句数通常 < 50，平方复杂度无所谓），
     配上的再按相似度分档：几乎一样→噪声丢弃；差得多→实质改写；配不上的→增/删。
     """
+    # 长度先算一遍：_ratio 里也要 normalize，预先把长度留下来，
+    # 长度上界过不了的句对就不必再做字符级比较了
+    old_len = [len(normalize(s.text)) for s in old_span]
+    new_len = [len(normalize(s.text)) for s in new_span]
+
     pairs: list[tuple[float, int, int]] = []
     for i, a in enumerate(old_span):
         for j, b in enumerate(new_span):
+            if _ratio_bound(old_len[i], new_len[j]) < MATCH_RATIO:
+                continue
             r = _ratio(a.text, b.text)
             if r >= MATCH_RATIO:
                 pairs.append((r, i, j))
@@ -265,10 +309,11 @@ def diff_versions(
     new_path: str | Path,
     *,
     drop_trivial: bool = True,
+    ocr: bool = True,
 ) -> VersionDiff:
     """句级对齐 + 噪声过滤 + 相邻合并。"""
-    old = load_sentences(old_path)
-    new = load_sentences(new_path)
+    old = load_sentences(old_path, ocr=ocr)
+    new = load_sentences(new_path, ocr=ocr)
     sm = difflib.SequenceMatcher(
         None, [s.text for s in old], [s.text for s in new], autojunk=False
     )
@@ -282,6 +327,12 @@ def diff_versions(
 
         # 大块"改写"不能当原子处理：41 句对 33 句的块里，往往只有 2 句真改了，
         # 其余是分栏顺序或表格抽取顺序变了。进去做句对级再对齐，只留下真动过的。
+        #
+        # 但"块"也可能是整本书对上几句话 —— 这时候两边根本不是同一份文档，
+        # 逐句配对只会把请求拖到超时。超过预算就照实说"整块换掉了"。
+        if len(old_span) * len(new_span) > MAX_REFINE_PAIRS:
+            raw.append(_whole_block_change(old_span, new_span))
+            continue
         parts, trivial_here = _refine(old_span, new_span, drop_trivial=drop_trivial)
         raw.extend(parts)
         dropped += trivial_here
@@ -293,6 +344,22 @@ def diff_versions(
         new_sentences=len(new),
         changes=_merge_adjacent(raw),
         trivial_dropped=dropped,
+    )
+
+
+def _whole_block_change(old_span: list[Sentence], new_span: list[Sentence]) -> Change:
+    """一个配对没做的整块替换：句数、页数照实写，句子照实列。
+
+    不截断列表：界面本来就只展开前 3 句、其余写"另有 N 句未展开"，
+    把列表砍掉再配一个假数字，反而说不清到底改了多少。
+    """
+    return Change(
+        kind="replace",
+        old_pages=sorted({s.page for s in old_span}),
+        new_pages=sorted({s.page for s in new_span}),
+        old=[s.text for s in old_span],
+        new=[s.text for s in new_span],
+        section=(new_span[0].section or old_span[0].section) if new_span or old_span else "",
     )
 
 
