@@ -1,0 +1,149 @@
+{
+  "note": "端到端评测题单。expect=answer 的题，库里必须有答案，且期望结论里出现 must_contain 里的词（用 \"|\" 分隔的几种写法取 OR，如 \"8|八\"）；expect=refuse 的题，论文原文里根本没有答案，系统必须说证据不足、不许给出可溯源结论。关键词是粗筛，只拦住\"答非所问\"，真正的把关是逐条引用回 PDF 核验。关键词必须按论文原文的同义写法标全 —— 标窄了会把答对的题判成答错。改题单只改这个文件，脚本不用动。",
+  "questions": [
+    {
+      "paper": "1706.03762",
+      "question": "Transformer 的 base 模型编码器和解码器各有几层？",
+      "expect": "answer",
+      "must_contain": ["6|六"]
+    },
+    {
+      "paper": "1706.03762",
+      "question": "这篇论文用了几个注意力头？",
+      "expect": "answer",
+      "must_contain": ["8|八"]
+    },
+    {
+      "paper": "1706.03762",
+      "question": "base 模型训练了多长时间？用了几块 GPU？",
+      "expect": "answer",
+      "must_contain": ["12|十二", "8|八"]
+    },
+    {
+      "paper": "1706.03762",
+      "question": "机器翻译实验用了哪个数据集？",
+      "expect": "answer",
+      "must_contain": ["WMT"]
+    },
+    {
+      "paper": "1706.03762",
+      "question": "How many attention heads does the base model use?",
+      "expect": "answer",
+      "must_contain": ["8|eight"]
+    },
+    {
+      "paper": "1810.04805",
+      "question": "BERT-Large 有多少参数？",
+      "expect": "answer",
+      "must_contain": ["340"]
+    },
+    {
+      "paper": "1810.04805",
+      "question": "BERT 的预训练用了哪两个任务？",
+      "expect": "answer",
+      "must_contain": ["masked|掩码"]
+    },
+    {
+      "paper": "1810.04805",
+      "question": "BERT-Base 有多少层、隐藏维度是多少？",
+      "expect": "answer",
+      "must_contain": ["12|十二", "768"]
+    },
+    {
+      "paper": "2005.14165",
+      "question": "GPT-3 有多少参数？",
+      "expect": "answer",
+      "must_contain": ["175"]
+    },
+    {
+      "paper": "2005.14165",
+      "question": "GPT-3 训练用了多少 token？",
+      "expect": "answer",
+      "must_contain": ["300"]
+    },
+    {
+      "paper": "2005.14165",
+      "question": "GPT-3 有多少层？",
+      "expect": "answer",
+      "must_contain": ["96|九十六"]
+    },
+    {
+      "paper": "2310.03294",
+      "question": "这篇论文要解决什么问题？",
+      "expect": "answer",
+      "must_contain": ["long-context|long context|长上下文|长序列|上下文"]
+    },
+    {
+      "paper": "2310.03294",
+      "question": "它用什么手段降低训练时的显存占用？",
+      "expect": "answer",
+      "must_contain": ["attention|注意力"]
+    },
+    {
+      "paper": "2508.18224",
+      "question": "这篇论文提出了什么方法？",
+      "expect": "answer",
+      "must_contain": ["sparse attention|稀疏注意力"]
+    },
+    {
+      "paper": "2508.18224",
+      "question": "这个 kernel 相比原有实现快在哪里？",
+      "expect": "answer",
+      "must_contain": ["3.5|H20"]
+    },
+    {
+      "paper": "1706.03762",
+      "question": "这篇论文的第一作者本科毕业于哪所大学？",
+      "expect": "refuse",
+      "must_contain": []
+    },
+    {
+      "paper": "1706.03762",
+      "question": "2017 年之后有哪些团队复现过这个模型，复现结果如何？",
+      "expect": "refuse",
+      "must_contain": []
+    },
+    {
+      "paper": "1810.04805",
+      "question": "BERT 在 ImageNet 图像分类上的 top-1 准确率是多少？",
+      "expect": "refuse",
+      "must_contain": []
+    },
+    {
+      "paper": "1810.04805",
+      "question": "这个项目的经费预算一共是多少美元？",
+      "expect": "refuse",
+      "must_contain": []
+    },
+    {
+      "paper": "2005.14165",
+      "question": "训练 GPT-3 一共排放了多少吨二氧化碳？",
+      "expect": "refuse",
+      "must_contain": []
+    },
+    {
+      "paper": "2005.14165",
+      "question": "GPT-3 的推理成本是每千 token 多少美元？",
+      "expect": "refuse",
+      "must_contain": []
+    },
+    {
+      "paper": "2310.03294",
+      "question": "这套实现在 Apple M3 芯片上的吞吐量是多少？",
+      "expect": "refuse",
+      "must_contain": []
+    },
+    {
+      "paper": "2508.18224",
+      "question": "这篇论文的第一作者目前在哪家公司工作？",
+      "expect": "refuse",
+      "must_contain": []
+    },
+    {
+      "paper": "2508.18224",
+      "question": "这个 kernel 在 NVIDIA B200 上的实测带宽是多少？",
+      "expect": "refuse",
+      "must_contain": []
+    }
+  ]
+}

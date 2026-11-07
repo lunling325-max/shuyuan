@@ -412,6 +412,13 @@ Docker 两阶段构建，容器内以 `appuser`（uid 10001）非 root 运行，
 | 解析耗时 | 首解析 / 命中缓存 | 3.2 s（15 页）/ 0.00 s；10.6 s（75 页前 40 页） |
 | 工程 | 测试 | 439 项全通过 |
 | 部署 | 端到端 | 公网问答实测：答"h = 8"，回溯第 5 页，`exact: true`、`similarity: 1.0` |
+| **端到端（24 题人工标注）** | **引用准确率 / 拒答正确率** | **53/53 = 100% / 9/9 = 100%**（E-025） |
+| **核验器反向对照** | 故意改坏的引用被拦下 | **12/12** |
+| **端到端耗时** | 单题中位数 / 最长 | 1851 ms / 5157 ms（2C4G 阿里云） |
+
+关于最后三行要补一句方法论：**引用准确率不是采信接口自报的 `exact` 字段**，
+而是把 PDF 下载下来自己重算 —— 引文字符流能否在所指页原样找到、bbox 能否盖住引文首尾字。
+"100%"的说服力不在 100% 本身，在于同一个核验器把 12 条故意改坏的引用全部拦下（`scripts/eval_qa.py`）。
 
 ---
 
@@ -483,5 +490,6 @@ apps/api/app/
   agent/        planner.py（两阶段规划）、registry.py（10 个工具）
   analysis/     chart.py（手写 SVG 出图）
 apps/web/       index.html（单文件前端）、logo.svg、logo-lockup.svg
-docs/           EXPERIMENTS.md（24 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
+docs/           EXPERIMENTS.md（25 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
+scripts/        eval_qa.py + eval_questions.json（端到端评测：引用准确率 / 拒答正确率）
 ```

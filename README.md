@@ -190,12 +190,31 @@ Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资
 所有"哪个方案更好"的结论都带数字，写在 [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md)，
 包括**被数据推翻的假设**（检索式加权、密集检索融合）。没有数字的取舍不写进去。
 
+## 端到端评测
+
+```bash
+# 24 题人工标注：15 题库里该有答案，9 题论文里根本没有（必须拒答）
+uv run --directory apps/api python ../../scripts/eval_qa.py \
+    --base-url http://101.37.190.214:8017 --out build/eval-qa.md
+```
+
+判据不看接口自报的 `exact` 字段：把 PDF 下载下来自己重算 —— 引文字符流能否在
+所指页原样找到、bbox 能否盖住引文首尾字。每轮还会抽 6 条真引用故意改坏
+（框平移、引文续编），核验器必须把它们全部拦下，否则本轮的引用数字作废。
+
+| 指标 | 结果（2026-11-07 线上，2C4G） |
+|---|---|
+| 引用准确率（回 PDF 独立核验） | **53 / 53 = 100%** |
+| 拒答正确率（论文里没有就不许给结论） | **9 / 9 = 100%** |
+| 核验器反向对照 | **12 / 12** 条改坏的引用被拦下 |
+| 单题耗时 中位数 / 最长 | 1851 ms / 5157 ms |
+
 ## 文档索引
 
 | 文件 | 内容 |
 |---|---|
 | [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 11 张实机截图（PDF 17 页，`build/TECH.pdf`） |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 24 篇实验记录（E-001–E-024），每条结论带实测数字 |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 25 篇实验记录（E-001–E-025），每条结论带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑与对策） |
 | [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：时间轴、逐段口播、翻车预案；录屏成品 `build/shuyuan-demo.mp4`（6 分 26 秒） |
