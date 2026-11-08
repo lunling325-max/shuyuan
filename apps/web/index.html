@@ -248,6 +248,9 @@ tbody tr:hover{background:var(--ring)}
 .rowdel:hover{color:var(--warn);border-color:var(--warn)}
 .rowdel.confirm{color:#fff;background:var(--warn);border-color:var(--warn);font-weight:560}
 .paper-bar{display:flex;align-items:center;gap:var(--sp-3);width:100%;max-width:560px}
+/* 标签不能被压缩折行：「当前文献」在小工具条里被挤成「当前文」/「献」两行，
+   看上去像排版坏了。flex 子项默认 min-width:auto 会收缩，这里明确不缩。 */
+.paper-bar .pick{flex:none;white-space:nowrap}
 .paper-bar .pick select{max-width:240px}
 /* 一行放不下就省略文件名，不让它把工具条挤成两行 */
 .paper-bar .sub{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -633,6 +636,14 @@ svg{width:100%;height:auto;display:block}
   h1{font-size:var(--fs-lg)}
   .page{padding:22px 16px}
   .page .cols{column-count:1}
+  /* 手机上五列放不下：块数、索引状态最先被裁掉，标题和"删"是必须留的。
+     宁可少两列，也不要横向拖动才能点到删除。
+     只作用于文献库那张表 —— 图谱的表格视图列数不同，按位置藏会把别人的数据藏掉。 */
+  #view-library .table-wrap{overflow-x:visible}
+  #view-library .table-wrap table{min-width:0}
+  #view-library .table-wrap th:nth-child(3), #view-library .table-wrap td:nth-child(3),
+  #view-library .table-wrap th:nth-child(4), #view-library .table-wrap td:nth-child(4){display:none}
+  #view-library .table-wrap th:first-child{width:auto}
 }
 </style>
 </head>
@@ -874,7 +885,16 @@ svg{width:100%;height:auto;display:block}
         <button class="src" type="button" data-src="zenodo" aria-pressed="true">Zenodo</button>
       </div>
       <span class="sub" id="arx-state" style="margin:0"></span>
-      <div id="arx-out" style="margin-top:14px"></div>
+      <!-- 首次进入时给一段说明，而不是留一片空白：这个页面是"要先输入才动"的，
+           空着会被当成没加载出来。检索一旦发起，这里会被结果整体替换。 -->
+      <div id="arx-out" style="margin-top:14px">
+        <p class="note" style="margin:0 0 8px;max-width:84ch">
+          五个来源各有侧重：arXiv 覆盖预印本，OpenAlex 与 Crossref 覆盖期刊出版信息，Semantic Scholar 附带引用关系，Zenodo 收录数据与代码。「全部」是一次全选／再按一次全不选，具体来源可单独开关。
+        </p>
+        <p class="note" style="margin:0;max-width:84ch">
+          检索结果里点击「入库」即下载 PDF 并建立索引，随后可在文献库、阅读器与引用图谱中使用。
+        </p>
+      </div>
     </div>
   </div>
 </section>
@@ -1360,20 +1380,66 @@ svg{width:100%;height:auto;display:block}
       '切换至本栏后开始解析。'));
   }
 
+  /** 文献库的排列：**同一篇的多版本必须挨着**。
+
+      库里有 1706.03762 的三份（v1、v1 的扫描件、v7），按上传顺序排的话它们
+      散在表格的第 7、10、13 行，扫一眼只看到两个同名同版的 "Attention Is All
+      You Need" —— 像是重复上传，其实是版本谱系功能的素材。挨着排 + 组内按
+      版本号升序，这三行的关系才立得住。
+
+      返回新数组，不动 `state.papers`：别的视图（版本下拉、PDF 选择器）依赖
+      原来的顺序。 */
+  function libraryOrder(papers) {
+    const firstSeen = new Map();
+    papers.forEach((p, i) => {
+      const key = pairKey(p);
+      if (!firstSeen.has(key)) firstSeen.set(key, i);
+    });
+    return papers
+      .map((p, i) => ({ p, i }))
+      .sort((a, b) => {
+        const ka = firstSeen.get(pairKey(a.p));
+        const kb = firstSeen.get(pairKey(b.p));
+        if (ka !== kb) return ka - kb;
+        return (a.p.arxiv_version || 0) - (b.p.arxiv_version || 0) || a.i - b.i;
+      })
+      .map((x) => x.p);
+  }
+
   function renderLibrary() {
     const rows = $('rows');
     const empty = $('empty-row');
     rows.querySelectorAll('tr:not(#empty-row)').forEach((r) => r.remove());
 
+    const groups = new Map();
     state.papers.forEach((p) => {
+      const key = pairKey(p);
+      groups.set(key, (groups.get(key) || 0) + 1);
+    });
+
+    libraryOrder(state.papers).forEach((p) => {
       // 标题下必须带日期：同一篇的 v1 和 v7 标题一模一样，
-      // 只列标题的话库内两行看着完全相同，等于没告诉用户哪个是新的
-      const meta = [p.filename, paperDateLong(p)].filter(Boolean).join(' · ');
+      // 只列标题的话库内两行看着完全相同，等于没告诉用户哪个是新的。
+      // 扫描件也要标出来 —— 扫描件和正常版是**同一版**的两份文件，
+      // 只写文件名的话，两行都写着 v1，看不出差别在哪。
+      const meta = [
+        p.filename,
+        p.arxiv_version ? `v${p.arxiv_version}` : '',
+        p.scanned ? '扫描件' : '',
+        // 扫描件的 PDF 里本来就没有 creationDate，也没有 arXiv 投稿日。
+        // 这里写「生成日期未知」看着像解析坏了，说破原因反而更像做对了。
+        p.scanned && !p.created_at && !p.arxiv_date
+          ? '无 PDF 元数据'
+          : paperDateLong(p),
+      ].filter(Boolean).join(' · ');
+      const versions = groups.get(pairKey(p)) || 1;
       // 点一行 = 打开这篇**并**切到阅读器。只 openPaper 不切视图的话，
       // 数据换了页却没换，看着像"点了没反应"。
       const tr = el('tr', { on: { click: () => openInReader(p.id) }, style: 'cursor:pointer' },
         el('td', {},
           el('b', {}, p.title),
+          versions > 1 ? el('span', { class: 'chip', style: 'margin-left:8px' },
+            `同一篇 ${versions} 个版本`) : null,
           el('div', { class: 'note', style: 'margin:2px 0 0' }, meta)),
         el('td', { class: 'mono' }, String(p.pages)),
         el('td', { class: 'mono' }, String(p.chunks)),
@@ -3812,26 +3878,71 @@ svg{width:100%;height:auto;display:block}
      点赞/踩落盘在后端，刷新页面还在。 */
   const REC = { busy: false, loaded: false, data: null };
 
+  // 真出网一次实测 20 秒（服务器 → arXiv 约 13KB/s，还要拉 24 条的 Atom）。
+  // 正常刷新远小于这个数，所以取 120 秒当"坏掉了"的边界：既不会误杀慢请求，
+  // 又不会让骨架无限挂着。
+  const RECOMMEND_TIMEOUT_MS = 120000;
+
   async function loadRecommend(fresh = false) {
     if (REC.busy) return;
     REC.busy = true;
     $('rec-run').disabled = true;
-    $('rec-out').replaceChildren(skeleton(3));
-    $('rec-state').textContent = '正在刷新 arXiv 最新提交…';
+    const runLabel = $('rec-run').textContent;
+    $('rec-run').textContent = '刷新中…';
+
+    // 手里有上一批就先照着画，同时后台刷新的那 20 秒里页面不空着。
+    // 把已有内容换成三个灰条，等于用一次刷新惩罚用户 —— 而刷新失败时
+    // 后端还会把旧的那批（落盘的）退回来，屏幕上有东西才知道它能退。
+    const stale = REC.data && REC.data.items && REC.data.items.length ? REC.data : null;
+    if (stale) renderRecommend(stale);
+    else $('rec-out').replaceChildren(skeleton(3));
+
+    // 计时器：这不是装饰。服务器到 arXiv 这条链路实测 13KB/s，
+    // 一次真正出网的刷新要 20 秒上下，静态文案会让人以为卡死了。
+    const startedAt = Date.now();
+    const say = () => {
+      const secs = Math.round((Date.now() - startedAt) / 1000);
+      const tail = stale ? '，先显示上一批' : '';
+      $('rec-state').textContent = secs < 3
+        ? `正在刷新 arXiv 最新提交…${tail}`
+        : `正在刷新 arXiv 最新提交…已等 ${secs} 秒（服务器到 arXiv 链路较慢，通常 20 秒上下）${tail}`;
+    };
+    say();
+    const ticker = setInterval(say, 1000);
+
+    // 兜底超时：fetch 默认不设上限，链路半死不活时骨架会一直挂在那儿。
+    const ctl = new AbortController();
+    const guard = setTimeout(() => ctl.abort(), RECOMMEND_TIMEOUT_MS);
     try {
       const cats = encodeURIComponent($('rec-cats').value.trim());
       const days = Number($('rec-days').value) || 7;
-      const data = await api(`/recommend?categories=${cats}&days=${days}&limit=12${fresh ? '&fresh=true' : ''}`);
+      const data = await api(
+        `/recommend?categories=${cats}&days=${days}&limit=12${fresh ? '&fresh=true' : ''}`,
+        { signal: ctl.signal },
+      );
       REC.data = data;
       REC.loaded = true;
       renderRecommend(data);
     } catch (err) {
-      $('rec-state').textContent = '刷新失败';
-      $('rec-out').replaceChildren(el('p', { class: 'note', style: 'color:var(--warn)' },
-        `推荐没取到：${err.message}`));
+      const msg = err.name === 'AbortError'
+        ? '等了两分钟仍未返回，已放弃（arXiv 那边多半在限流）。库内文献不受影响，稍后再点「刷新」。'
+        : `推荐没取到：${err.message}`;
+      const warn = el('p', { class: 'note', style: 'margin:0 0 12px;color:var(--warn)' }, msg);
+      if (stale) {
+        // 刷新失败不该把上一批擦掉：那批仍然是能用的候选论文，
+        // 只是得说清"这是旧的"，别让人当成刚刷出来的。
+        $('rec-state').textContent = '刷新失败 —— 下面是上一次成功刷到的那批';
+        $('rec-out').replaceChildren(warn, renderRecommendBody(stale));
+      } else {
+        $('rec-state').textContent = '刷新失败';
+        $('rec-out').replaceChildren(warn);
+      }
     } finally {
+      clearInterval(ticker);
+      clearTimeout(guard);
       REC.busy = false;
       $('rec-run').disabled = false;
+      $('rec-run').textContent = runLabel;
     }
   }
 
@@ -3842,17 +3953,18 @@ svg{width:100%;height:auto;display:block}
     if (data.degraded) parts.push('本次未获取到新论文');
     else if (data.cached) parts.push('缓存（15 分钟内不重复出网）');
     $('rec-state').textContent = parts.join(' · ');
+    $('rec-out').replaceChildren(renderRecommendBody(data));
+  }
 
-    const out = $('rec-out');
+  /** 只负责拼内容，不碰 `#rec-state` —— 刷新失败时要把它挂在错误提示下面。 */
+  function renderRecommendBody(data) {
     if (data.degraded && !data.items.length) {
-      out.replaceChildren(el('p', { class: 'note', style: 'margin:0;color:var(--warn)' },
-        `${data.note || 'arXiv 本次未返回数据'}。稍后点击「刷新」即可，库内文献不受影响。`));
-      return;
+      return el('p', { class: 'note', style: 'margin:0;color:var(--warn)' },
+        `${data.note || 'arXiv 本次未返回数据'}。稍后点击「刷新」即可，库内文献不受影响。`);
     }
     if (!data.items.length) {
-      out.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
-        '该时间窗内无新提交，请增大天数后重试。'));
-      return;
+      return el('p', { class: 'note', style: 'margin:0' },
+        '该时间窗内无新提交，请增大天数后重试。');
     }
     const rows = data.items.map(recRow);
     if (data.degraded && data.note) {
@@ -3860,7 +3972,9 @@ svg{width:100%;height:auto;display:block}
       rows.unshift(el('p', { class: 'note', style: 'margin:0 0 10px;color:var(--warn)' },
         `${data.note}。这些仍为可用的候选论文，库内文献不受影响。`));
     }
-    out.replaceChildren(...rows);
+    const wrap = el('div', {});
+    wrap.append(...rows);
+    return wrap;
   }
 
   function recRow(r) {

@@ -568,6 +568,6 @@ apps/api/app/
   agent/        planner.py（两阶段规划）、registry.py（10 个工具）
   analysis/     chart.py（手写 SVG 出图）
 apps/web/       index.html（单文件前端）、logo.svg、logo-lockup.svg
-docs/           EXPERIMENTS.md（29 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
+docs/           EXPERIMENTS.md（30 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
 scripts/        eval_qa.py + eval_questions.json（端到端评测：引用准确率 / 拒答正确率）
 ```

@@ -85,11 +85,23 @@ def shoot(url: str, out: Path, width: int, height: int, dark: bool, js: str, wai
         cdp.call("Page.enable")
         cdp.call("Emulation.setDeviceMetricsOverride",
                  width=width, height=height, deviceScaleFactor=1, mobile=width < 600)
+        # 两样都做：模拟媒体查询对"跟随系统的样式"有效，而这个应用的主题
+        # 是 `<html data-theme>` 上的一个属性（存在 localStorage 里），
+        # 只看媒体查询会拍出一张"自称暗色、其实是浅色"的图。
         if dark:
             cdp.call("Emulation.setEmulatedMedia",
                      features=[{"name": "prefers-color-scheme", "value": "dark"}])
         cdp.call("Page.navigate", url=url)
         time.sleep(1.6)  # 等首屏渲染 + 接口返回
+        if dark:
+            # 有主题按钮就点它（这样按钮上的文案、aria 也一起变，图里不会出现
+            # "明明是暗色却还写着深色"）；没有就直接改属性。
+            cdp.call("Runtime.evaluate", expression=(
+                "(function(){if(document.documentElement.dataset.theme!=='dark'){"
+                "var b=document.getElementById('theme');"
+                "if(b){b.click();}else{document.documentElement.dataset.theme='dark';}}})()"
+            ))
+            time.sleep(0.2)
         if js:
             res = cdp.call("Runtime.evaluate", expression=js, awaitPromise=True, returnByValue=True)
             value = res.get("result", {}).get("value")
