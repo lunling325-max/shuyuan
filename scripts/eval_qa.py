@@ -30,6 +30,8 @@ import difflib
 import json
 import statistics
 import sys
+import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,8 +42,30 @@ ROOT = Path(__file__).resolve().parents[1]
 QUESTIONS = ROOT / "scripts" / "eval_questions.json"
 
 
+MAX_RETRY_ON_429 = 3
+
+
+def _open(req, timeout: float):
+    """发请求，撞上限流就按 `Retry-After` 等一等再试。
+
+    服务端默认每分钟 30 次、突发 8 次（`app/api/ratelimit.py`）。整套评测 24 题
+    是"人不可能这样点"的突发流量，会被正确地拦下来 —— 所以这里按规矩等，
+    而不是去要求服务端为评测开后门。撞了一次限流会在日志里说一声，
+    免得"等了 90 秒"被误读成"服务变慢了"。
+    """
+    for attempt in range(MAX_RETRY_ON_429 + 1):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429 or attempt == MAX_RETRY_ON_429:
+                raise
+            wait = float(exc.headers.get("Retry-After") or 5)
+            print(f"    撞上限流，等 {wait:.0f} 秒（第 {attempt + 1} 次）", flush=True)
+            time.sleep(wait)
+
+
 def _get(url: str, timeout: float = 120.0) -> bytes:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 —— 只打自己部署的服务
+    with _open(url, timeout) as resp:
         return resp.read()
 
 
@@ -50,7 +74,7 @@ def _post_json(url: str, payload: dict, timeout: float = 180.0) -> dict:
     req = urllib.request.Request(
         url, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+    with _open(req, timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 

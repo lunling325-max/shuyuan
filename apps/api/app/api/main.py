@@ -36,6 +36,7 @@ from app.api.deps import (
     paper_out,
     registry,
 )
+from app.api.ratelimit import RateLimitMiddleware, limiter_from_env
 from app.api.registry import Paper, PaperBusy, PaperNotFound
 from app.config import load_dotenv
 from app.api.schemas import (
@@ -94,6 +95,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 限流紧挨着 CORS 装上：排在业务中间件之前，被拦下的请求连解析都不做。
+# 用纯 ASGI 中间件而不是 BaseHTTPMiddleware —— SSE 流式响应不该被它缓冲一层。
+_limiters = limiter_from_env(os.environ)
+if _limiters is not None:
+    app.add_middleware(RateLimitMiddleware, limiter=_limiters)
 
 
 # ------------------------------------------------------------------ 工具

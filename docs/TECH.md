@@ -403,7 +403,7 @@ LangGraph 这类框架提供的核心价值是状态机与时序控制。本系�
 
 | 项 | 数值 |
 |---|---|
-| 自动化测试 | **451 项通过**（`uv run pytest -q`） |
+| 自动化测试 | **468 项通过**（`uv run pytest -q`） |
 | 运行时依赖 | 8 个 |
 | 启动 | `./scripts/dev.sh`（Windows 用 `.\scripts\dev.ps1`），唯一前置是 `uv` |
 | 部署 | `./scripts/deploy_remote.sh`，一条命令打包→上传→装 Docker→加 swap→构建→探活 |
@@ -420,6 +420,37 @@ LangGraph 这类框架提供的核心价值是状态机与时序控制。本系�
 | 网络受限（arXiv / Semantic Scholar） | 该来源标注"暂不可用"，其余来源不受影响 |
 
 原则一句话：**宁可少答，不可假答；宁可降级，不可白屏。**
+
+### 8.2.1 限流：宽到演示碰不到，窄到滥用撞墙
+
+公网 IP 后面是一个付费模型，没有配额等于把密钥交给路过的人。实现是**按来源的令牌桶**
+（`app/api/ratelimit.py`），默认每分钟 60 次、突发 10 次：
+
+| 请求 | 计费 |
+|---|---|
+| `GET` 全部 | 0（读内存索引，纳秒级；限它只会让"刷新一下"撞墙） |
+| 一次问答 / 综述 / Agent / 翻译 | 1 |
+| 一次上传（解析 + 可能 OCR） | 3 |
+| 批量上传 | 6 |
+
+用"令牌"而不是"每类一个配额"，是因为上传和问答要记在同一份额度上 ——
+否则刷上传的请求永远撞不到问答题目的限额。被拦下时给的是**人话 + 可执行的等待秒数**：
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 2
+
+{"detail": "请求过于频繁，请约 2 秒后再试。"}
+```
+
+三个工程细节：**桶按时间回填而不是按请求数**（撞墙后狂点没有用）；
+**用纯 ASGI 中间件**而不是 `BaseHTTPMiddleware`（后者会多包一层任务组，SSE 流式响应
+可能被缓冲）；**key 优先取 `X-Forwarded-For` 的第一个地址**（代理链最左边才是真实客户端，
+取右边等于给所有人发同一个 key）。
+
+实测：容器里看到的对端是真实地址（`218.2.220.26`），所以按来源限流是真的生效；
+连打 14 次，第 4 次开始 429。`scripts/eval_qa.py` 跑 24 题是"人不会这样点"的突发流量，
+它**按 `Retry-After` 等**，而不是要求服务端给自己的评测开后门（E-029）。
 
 ![多源检索](img/fig11-retrieve.png)
 
@@ -455,7 +486,7 @@ Docker 两阶段构建，容器内以 `appuser`（uid 10001）非 root 运行，
 | 扫描件 OCR | 词级 F1（72 dpi） | 0.866（字符错误率 9.2%） |
 | 表格还原 | 行×列正确归属 | GPT-3 Table 2.1 → 11 行；Transformer Table 2 → 11 行 |
 | 解析耗时 | 首解析 / 命中缓存 | 3.2 s（15 页）/ 0.00 s；10.6 s（75 页前 40 页） |
-| 工程 | 测试 | 451 项全通过 |
+| 工程 | 测试 | 468 项全通过 |
 | 部署 | 端到端 | 公网问答实测：答"h = 8"，回溯第 5 页，`exact: true`、`similarity: 1.0` |
 | **端到端（24 题人工标注）** | **引用准确率 / 拒答正确率** | **53/53 = 100% / 9/9 = 100%**（E-025） |
 | 规模（7 → 13 篇） | 同一套题单的稳定性 | 引用 53/53、拒答 9/9 不变，中位 1851 → 2005 ms（E-026） |
@@ -495,7 +526,7 @@ Docker 两阶段构建，容器内以 `appuser`（uid 10001）非 root 运行，
 uv run python scripts/seed_demo.py
 
 # 3. 跑测试
-cd apps/api && uv run pytest -q  # 451 passed
+cd apps/api && uv run pytest -q  # 468 passed
 
 # 4. 检索评测（可冻结 LLM 改写结果做对比）
 uv run python scripts/eval_retrieval.py --dense / --hybrid
@@ -537,6 +568,6 @@ apps/api/app/
   agent/        planner.py（两阶段规划）、registry.py（10 个工具）
   analysis/     chart.py（手写 SVG 出图）
 apps/web/       index.html（单文件前端）、logo.svg、logo-lockup.svg
-docs/           EXPERIMENTS.md（28 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
+docs/           EXPERIMENTS.md（29 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
 scripts/        eval_qa.py + eval_questions.json（端到端评测：引用准确率 / 拒答正确率）
 ```
