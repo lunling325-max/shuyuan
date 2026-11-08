@@ -266,6 +266,16 @@ tbody tr:hover{background:var(--ring)}
   font-family:system-ui,sans-serif;
 }
 .page em{font-style:italic}
+/* 上/下一段：压在块的下方，两侧对称，中间留出"第几段" —— 短块下面的空白
+   因此变成"读到哪了"的读数，而不是一片空。 */
+.pagenav{
+  column-span:all;display:flex;align-items:center;justify-content:space-between;
+  gap:12px;margin-top:26px;padding-top:14px;border-top:1px solid var(--hair);
+  font-size:var(--fs-sm);text-align:left;
+}
+.pagenav a{color:var(--s1);text-decoration:none;border-radius:4px;padding:2px 4px}
+.pagenav a:hover{background:var(--ring)}
+.pagenav .note{color:var(--ink-3);font-size:var(--fs-xs)}
 mark{
   background:var(--wash);color:inherit;padding:1px 2px;border-radius:3px;
   outline:1px solid rgba(42,120,214,.35);
@@ -1841,9 +1851,7 @@ svg{width:100%;height:auto;display:block}
     const hit = state.chunks.find((c) => page >= c.page_start && page <= c.page_end);
     if (hit) {
       renderChunk(hit);
-      $('outline-list').querySelectorAll('a').forEach((a) => {
-        a.classList.toggle('on', a.dataset.page === String(hit.page_start));
-      });
+      syncOutline(hit);
     }
   }
 
@@ -2106,6 +2114,9 @@ svg{width:100%;height:auto;display:block}
         },
       }, `${label}`);
       link.dataset.page = String(c.page_start);
+      // 页码不能当唯一标识：同一页上常常开了好几个小节（p.1 上是 Abstract
+      // 和 1 Introduction），只按 page_start 找会高亮到隔壁那一条。
+      link.dataset.section = c.section;
       if (state.chunk && c.index === state.chunk.index) link.classList.add('on');
       list.append(link);
     });
@@ -2305,6 +2316,9 @@ svg{width:100%;height:auto;display:block}
       return;
     }
     renderChunk(hit);
+    // 从参考文献跳过来时正文换了、目录还停在原来那一节 —— 两个"当前位置"
+    // 说不同的地方，看的人会以为跳错了
+    syncOutline(hit);
     const chip = $('page-text').querySelector(`.cmark[data-key="${CSS.escape(key)}"]`);
     if (chip) flash(chip);
     else showNote(`已跳到 ${hit.section}，但这一块的标记分割在两个块之间`);
@@ -2353,6 +2367,48 @@ svg{width:100%;height:auto;display:block}
           target: '_blank', rel: 'noopener',
         }, `在原始 PDF 中打开 ${pageLabel} →`)));
     }
+    body.append(chunkNav(chunk));
+  }
+
+  /** 上/下一段。阅读器一次只显示一个块，短的块下面会留下大片空白 ——
+      只给"左侧目录"这一条路的话，读起来就是"读完这节要回目录再点一次"。
+      顺序按 `state.chunks`（该篇的原始顺序），不是按字符串比大小。 */
+  function chunkNav(chunk) {
+    const at = state.chunks.findIndex((c) => c.index === chunk.index);
+    const mine = state.chunks[at];
+    const link = (label, target) => el('a', {
+      href: '#',
+      on: {
+        click: (e) => {
+          e.preventDefault();
+          renderChunk(target);
+          syncOutline(target);
+        },
+      },
+    }, label);
+    return el('div', { class: 'pagenav' },
+      at > 0 ? link('← 上一段', state.chunks[at - 1]) : el('span', {}),
+      el('span', { class: 'note', style: 'margin:0' },
+        at >= 0 ? `第 ${at + 1} / ${state.chunks.length} 段 · ${mine.section}` : ''),
+      at >= 0 && at + 1 < state.chunks.length
+        ? link('下一段 →', state.chunks[at + 1])
+        : el('span', {}),
+    );
+  }
+
+  /** 目录高亮跟着当前块走。跳转的三个入口（点目录、点引用、上下段）都归到这一处。
+
+      按**小节名**匹配，不按页码也不按块序号：目录里一节只有一条（同一节
+      可能被切成好几块，References 就有三块），而页码会在"同一页开两个小节"时
+      指到隔壁那条。 */
+  function syncOutline(chunk) {
+    const links = $('outline-list').querySelectorAll('a');
+    const exact = [...links].find((a) => a.dataset.section === chunk.section);
+    links.forEach((a) => {
+      a.classList.toggle('on', exact
+        ? a === exact
+        : a.dataset.page === String(chunk.page_start));
+    });
   }
 
   /** 从锚点跳回原文：找到包含该页的块，并把引用原句高亮出来。 */
@@ -2364,9 +2420,7 @@ svg{width:100%;height:auto;display:block}
     ) || state.chunks.find((c) => page >= c.page_start && page <= c.page_end);
     if (hit) {
       renderChunk(hit, quote);
-      $('outline-list').querySelectorAll('a').forEach((a) => {
-        a.classList.toggle('on', a.dataset.page === String(hit.page_start));
-      });
+      syncOutline(hit);
     }
   }
 
