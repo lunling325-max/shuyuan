@@ -32,6 +32,10 @@ uv run uvicorn app.api.main:app --reload --port 8017
 200 + `degraded`：检索、逐条溯源校验、扫描件 OCR、表格与插图解析都还能演示，
 只有"生成中文结论"这一步会降级。这是有意设计——演示现场断网不该白屏。
 
+**中文提问也不依赖模型。** 内置一张"中文术语 → 英文检索词"的表（`app/rag/glossary.py`），
+不联网、不调模型，18 题开发集 Hit@1 88.9% / Hit@3 94.4%，13 题留出集 92.3%；
+和模型改写合并后开发集 Hit@3 100%、留出集 13/13（§4.3、E-028）。
+
 手边先放几篇 PDF，有两种加进去的办法：
 
 - 界面右上角「＋ 上传 PDF」，一篇篇加；
@@ -147,7 +151,7 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 ## 测试
 
 ```bash
-cd apps/api && uv run pytest -q     # 439 项
+cd apps/api && uv run pytest -q     # 451 项
 ```
 
 覆盖：切块的边界条件、BM25 排序与单复数归并、RRF 去重、守卫的三级匹配、
@@ -217,7 +221,7 @@ uv run --directory apps/api python ../../scripts/eval_qa.py \
 | 文件 | 内容 |
 |---|---|
 | [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 11 张实机截图（PDF 17 页，`build/TECH.pdf`） |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 27 篇实验记录（E-001–E-027），每条结论带实测数字 |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 28 篇实验记录（E-001–E-028），每条结论带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑与对策） |
 | [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：时间轴、逐段口播、翻车预案；录屏成品 `build/shuyuan-demo.mp4`（6 分 26 秒） |

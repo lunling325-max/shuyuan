@@ -7,11 +7,14 @@ BM25 把中文切成 0 个 token，一条都召回不了 —— 词法通道对�
 做法：先让 LLM 把问题改写成 2~3 条**英文检索式**（同义词、术语、缩写各来一条），
 每条各召回一批，再用 RRF 融合。这比只查一次稳，也比上多语言向量模型便宜。
 
-失败必须能降级：模型挂了就往回退回原始问题，不能把问答整条链路拖死。
+失败必须能降级：模型挂了就退回**内置术语表**（`app.rag.glossary`），表也查不到
+才退回原始问题 —— 不能把问答整条链路拖死，也不能让"中文提问"这件事
+单点依赖一次大模型调用。
 """
 
 from __future__ import annotations
 
+from app.rag.glossary import expand_offline
 from app.retrieval.bm25 import Hit, reciprocal_rank_fusion
 
 EXPAND_SYSTEM = """You turn a research question into search queries for a keyword (BM25) index of an English paper.
@@ -23,8 +26,24 @@ Rules:
 - Only output JSON: {"queries": ["...", "..."]}"""
 
 
+def with_offline(question: str, queries: list[str]) -> list[str]:
+    """把术语表的检索式并进已有的一组（去重、保持原顺序），空则退回原问题。
+
+    为什么要**并**而不是"二选一"：两条通道错的地方不一样。
+    模型改写擅长读懂"会影响吗"这种因果问法，术语表擅长钉住专有名词的精确词形。
+    实测 18 题开发集上，模型单独 15/18、术语表单独 16/18，
+    合并后 **16/18 且 Hit@3 补齐到 18/18**；留出集 13 题上合并也是 13/13。
+    两条都不比对方差，就没有理由只留一条。
+    """
+    merged = list(queries)
+    for extra in expand_offline(question):
+        if extra not in merged:
+            merged.append(extra)
+    return merged or [question]
+
+
 def expand_query(question: str, *, llm_call=None) -> list[str]:
-    """把问题改写成若干条检索式；任何失败都退回原问题。"""
+    """把问题改写成若干条检索式；模型挂了也还有**离线术语表**兜着。"""
     if llm_call is None:
         from app.llm.client import chat_json as llm_call
 
@@ -34,9 +53,12 @@ def expand_query(question: str, *, llm_call=None) -> list[str]:
         )
         queries = [str(q).strip() for q in (raw.get("queries") or []) if str(q).strip()]
     except Exception:  # noqa: BLE001 —— 扩展是增强项，不能变成单点故障
-        return [question]
+        # 大模型挂了不等于跨语言检索要一起挂：内置术语表是不联网的那条备胎。
+        # 纯英文问题表里查不到东西，`expand_offline` 返回空，退回原问题，
+        # 行为与加表之前完全一致。
+        return with_offline(question, [])
 
-    return queries or [question]
+    return with_offline(question, queries)
 
 
 def retrieve(

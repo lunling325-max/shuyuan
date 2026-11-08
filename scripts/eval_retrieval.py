@@ -6,6 +6,7 @@
 用法（需在 apps/api 下跑，用项目自带的 venv）：
     uv run python ../../scripts/eval_retrieval.py
     ... --no-expand          # 单路 BM25，零扩展
+    ... --offline            # 不调模型，只走内置术语表（模拟大模型不可用）
     ... --build-cache        # 冻结 18 题的检索式扩展（对比实验的前提）
     ... --dense              # 只走向量通道（消融）
     ... --hybrid [--dense-weight 0.4]
@@ -77,12 +78,18 @@ def main() -> int:
     ap.add_argument("--dense", action="store_true", help="只走向量通道")
     ap.add_argument("--hybrid", action="store_true", help="词法 + 向量并行（默认只走词法）")
     ap.add_argument("--dense-weight", type=float, default=1.0, help="融合时向量通道的权重")
+    ap.add_argument(
+        "--offline",
+        action="store_true",
+        help="不调模型，只走内置术语表（模拟大模型不可用时的降级路径）",
+    )
     args = ap.parse_args()
 
     load_dotenv(ROOT / ".env")
 
     from app.parsing.chunker import chunk_pdf
-    from app.rag.query import expand_query
+    from app.rag.glossary import expand_offline
+    from app.rag.query import expand_query, with_offline
     from app.retrieval import BM25, reciprocal_rank_fusion
     from app.retrieval.dense import DenseIndex
     from app.retrieval.embeddings import load_embedder
@@ -103,19 +110,25 @@ def main() -> int:
 
     # 检索词扩展是 LLM 调用，天然有抖动；把结果缓存下来，
     # 才能让 "等权 vs 加权" 这种对比只受融合策略影响，不受模型情绪影响。
-    cache = {} if (args.build_cache or not expand) else _load_cache()
+    cache = {} if (args.build_cache or not expand or args.offline) else _load_cache()
     if args.build_cache:
         for q, _ in CASES:
             cache[q] = expand_query(q)
         _save_cache(cache)
         print(f"已缓存 {len(cache)} 条检索词扩展 → {CACHE.relative_to(ROOT)}\n")
-    elif expand and not cache:
+    elif expand and not cache and not args.offline:
         print("没有缓存，先跑 --build-cache 固定检索词；本次直接调用模型。\n")
 
     hit1 = hit3 = 0
     rows = []
     for q, expected in CASES:
-        queries = (cache.get(q) or expand_query(q)) if expand else [q]
+        if args.offline:
+            queries = expand_offline(q) or [q]
+        elif expand:
+            # 缓存里只有模型那一组，术语表那几条在缓存之外现算 —— 与线上口径一致
+            queries = with_offline(q, cache.get(q) or expand_query(q))
+        else:
+            queries = [q]
         searchers = [
             (s, args.dense_weight if s is dense and s is not None else 1.0)
             for s in (retriever, dense)
