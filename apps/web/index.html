@@ -324,6 +324,23 @@ mark{
 .dtable tr:last-child td{border-bottom:0}
 .figcard{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:9px;
   border:1px solid var(--hair);background:var(--surface-2)}
+.figcard.flash{border-color:var(--warn);box-shadow:0 0 0 2px var(--wash)}
+/* 图表卡片底下那行「正文 p.3 · p.7」：从图跳回正文的入口 */
+.vrefs{display:flex;flex-wrap:wrap;align-items:center;gap:6px;
+  font-size:var(--fs-xs);color:var(--ink-3)}
+.vrefs button{
+  border:1px solid var(--hair);background:var(--surface-1);color:var(--s1);
+  border-radius:6px;padding:1px 7px;font:inherit;font-size:var(--fs-xs);cursor:pointer;
+  font-variant-numeric:tabular-nums;
+}
+.vrefs button:hover{border-color:var(--s1)}
+/* 正文里的 Figure 9 / Table 2：借引用标记的样式，但加虚线下划线，
+   跟 [11] 那种"跳到参考文献"区分开 —— 两者的落点在两个不同的面板 */
+.lvref{
+  border:0;background:none;padding:0 1px;font:inherit;font-size:inherit;
+  color:var(--s1);cursor:pointer;border-radius:3px;
+  border-bottom:1px dashed var(--s1);
+}
 .figcard .vcap{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-sm);font-weight:600}
 .figcard .pg{margin-left:auto;font-weight:400;font-size:var(--fs-xs);color:var(--ink-3);font-variant-numeric:tabular-nums}
 .thumb{display:block;width:100%;border:1px solid var(--hair);border-radius:7px;background:#fff}
@@ -1272,6 +1289,11 @@ svg{width:100%;height:auto;display:block}
     // 图表要逐页找网格线（约 0.29 秒/页），所以 init 为 null＝还没解析过，
     // 只有切到那一栏时才拉。null 和"解析完了但 0 张"必须分得开。
     visuals: null, visualError: '', visualLoading: false,
+    // 图文互链：visualIndex = 编号→卡片（只有解析出图注的才有），
+    // captions = 编号→图注前 40 字（用来排除"图注自己提到自己"），
+    // mentions = 编号→正文里提到它的块；
+    // pendingFig 是"点了正文编号但图表还没解析完"
+    visualIndex: new Map(), mentions: new Map(), captions: new Map(), pendingFig: '',
   };
 
   // 中英对照的两侧是否联动滚动。放模块级而不是 state：它跟"当前文献"无关，
@@ -2065,6 +2087,11 @@ svg{width:100%;height:auto;display:block}
     // 否则切到图表栏看到的是别人的表
     state.visuals = null;
     state.visualError = '';
+    // 编号索引也得清：留着上一篇的，正文就会把「Figure 9」链到别人家的图
+    state.visualIndex = new Map();
+    state.mentions = new Map();
+    state.captions = new Map();
+    state.pendingFig = '';
     $('visual-count').textContent = '—';
     $('visual-body').replaceChildren(el('p', { class: 'note', style: 'margin:0' },
       '切换至本栏后开始解析。'));
@@ -2147,19 +2174,40 @@ svg{width:100%;height:auto;display:block}
     const hi = at < 0 ? -1 : at + highlight.length;
     const nodes = [];
     let last = 0;
-    for (const m of flat.matchAll(CITE_RE)) {
-      const [raw] = m;
-      const key = firstKey(raw);
-      nodes.push(...textWithMark(flat.slice(last, m.index), last, at, hi));
-      nodes.push(el('button', {
-        class: 'cmark', type: 'button', 'data-key': key,
-        'aria-label': `跳到参考文献 ${key}`,
-        on: { click: () => jumpToRef(key) },
-      }, raw));
-      last = m.index + raw.length;
+    for (const hit of anchorHits(flat)) {
+      nodes.push(...textWithMark(flat.slice(last, hit.at), last, at, hi));
+      nodes.push(hit.node);
+      last = hit.at + hit.len;
     }
     nodes.push(...textWithMark(flat.slice(last), last, at, hi));
     return nodes.filter((n) => n !== '');
+  }
+
+  /** 正文里所有可点的锚点：文献标记 `[11]`、图表编号 `Figure 9` / `Table 2`。
+      两类一起扫、按位置排序后一次走完 —— 分两趟各自拼接会把文本顺序打乱。 */
+  function anchorHits(flat) {
+    const hits = [];
+    for (const m of flat.matchAll(CITE_RE)) {
+      const key = firstKey(m[0]);
+      hits.push({ at: m.index, len: m[0].length, node: el('button', {
+        class: 'cmark', type: 'button', 'data-key': key,
+        'aria-label': `跳到参考文献 ${key}`,
+        on: { click: () => jumpToRef(key) },
+      }, m[0]) });
+    }
+    if (state.visualIndex && state.visualIndex.size) {
+      for (const m of flat.matchAll(new RegExp(FIG_RE.source, 'gi'))) {
+        const key = figKey(figKind(m[1]), m[2]);
+        const card = state.visualIndex.get(key);
+        if (!card) continue;   // 没有对应卡片就不给入口，免得点了没反应
+        hits.push({ at: m.index, len: m[0].length, node: el('button', {
+          class: 'lvref', type: 'button', 'data-figkey': key,
+          'aria-label': `跳到${card.label}`,
+          on: { click: () => jumpToCard(key) },
+        }, m[0]) });
+      }
+    }
+    return hits.sort((a, b) => a.at - b.at);
   }
 
   /* 下拉刷新参考文献列表。解析不出条目不是错误，是这类 PDF 的常态。 */
@@ -2215,6 +2263,10 @@ svg{width:100%;height:auto;display:block}
   async function loadVisuals(paperId) {
     state.visuals = null;
     state.visualError = '';
+    // 重新解析期间先不要给入口：旧索引留着的话，正文里的编号会指向还没画出来的卡片
+    state.visualIndex = new Map();
+    state.mentions = new Map();
+    state.captions = new Map();
     state.visualLoading = true;
     $('visual-count').textContent = '…';
     $('visual-body').replaceChildren(el('p', { class: 'note', style: 'margin:0' },
@@ -2250,6 +2302,22 @@ svg{width:100%;height:auto;display:block}
     const figures = state.visuals.figures.figures;
     $('visual-count').textContent = String(tables.length + figures.length);
 
+    // 正文里"Figure 9 / Table 2"要不要变成可点的，取决于这里有没有对应的卡片：
+    // 编号存在但解析时没认出图注的，宁可不给入口，也不给一个点了没反应的链接
+    state.visualIndex = new Map();
+    // 图注前 40 字用来认出"这一块就是它自己的图注"，据此把自引排除掉
+    state.captions = new Map();
+    const remember = (kind, item) => {
+      const key = keyOfLabel(kind, item.label);
+      if (!key) return;
+      state.visualIndex.set(key, { label: item.label, page: item.page });
+      const text = squash(item.caption).slice(0, 40);
+      if (text) state.captions.set(key, text);
+    };
+    tables.forEach((t) => remember('table', t));
+    figures.forEach((f) => remember('figure', f));
+    state.mentions = buildMentions();
+
     const nodes = [];
     // 两个端点共用同一份解析结果，note 只说一遍（"表格 4 张、插图 2 幅"）
     if (state.visuals.tables.note) {
@@ -2258,12 +2326,138 @@ svg{width:100%;height:auto;display:block}
     tables.forEach((t) => nodes.push(tableCard(t)));
     figures.forEach((f) => nodes.push(figureCard(f)));
     $('visual-body').replaceChildren(...nodes);
+
+    // 有人点了正文里的编号才走到这里：解析是懒的，卡片落地后再定位
+    if (state.pendingFig) {
+      flashCard(state.pendingFig);
+      state.pendingFig = '';
+    }
+  }
+
+  /* ---------------------------------------------------------- 图文互链
+
+     正文写「as shown in Figure 9」，图又在另一个面板里 —— 这两句话之间
+     原来没有任何可走的路：读正文要自己翻到图表栏凭编号找，看图想知道
+     "作者在哪一节讨论它"要自己回头搜。两个方向都补上：
+
+     - 正文里的编号 → 点一下切到图表栏、滚到那张卡片并闪一下；
+     - 卡片底部的「正文提到 p.3 · p.7」→ 点一下跳回那一块，并把编号闪出来。
+
+     判断"有没有这张卡片"用的是**卡片自己的编号**（解析时从图注里认出来的），
+     不是正文里出现的任何数字：正文里的 "Figure 9" 如果根本没解析出卡片，
+     就不该变成可点的东西。 */
+
+  // 「Figure 9」「Fig. 9」「Table 2.1」「Tab. 2」「图 3」「表 2」都认；末尾的 a/b 子图号忽略。
+  // 缩写 `Tab.` 必须带点：不带点会跟 "table" 之外的东西撞（"tab" 这词在正文里另有含义），
+  // 而带点的写法正是 DiNAT 那篇在正文里引用表格的方式（22 处 `Tab. N`）。
+  const FIG_RE = /(figure|fig\.?|table|tab\.|图|表)\s*(\d+(?:\.\d+)*)/gi;
+
+  const figKind = (word) => (/^(table|tab\.|表)$/i.test(word) ? 'table' : 'figure');
+  const figKey = (kind, num) => `${kind}:${String(num).toLowerCase()}`;
+
+  /** 卡片的 label（`Table 2.1`）→ 查表用的键。认不出编号就返回空串。 */
+  function keyOfLabel(kind, label) {
+    const m = /(\d+(?:\.\d+)*)\s*[a-z]?$/i.exec(label || '');
+    return m ? figKey(kind, m[1]) : '';
+  }
+
+  const squash = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+
+  /** 一遍扫完所有块，得到「编号 → 提到它的块」。39 块 × 几个正则，开销可忽略。
+
+      **图注自己那一块不算**：图注里当然写着 `Table 2.1`，那是"定义"不是"引用"，
+      算进去每张卡片都必然至少一处（实测 130/130，看着漂亮其实什么都没说明）。
+      判据是"这一块里有这张图的图注前 40 字"。 */
+  function buildMentions() {
+    const map = new Map();
+    for (const c of state.chunks || []) {
+      const flat = squash(c.text);
+      const seen = new Set();
+      for (const m of flat.matchAll(new RegExp(FIG_RE.source, 'gi'))) {
+        const key = figKey(figKind(m[1]), m[2]);
+        if (seen.has(key)) continue;          // 同一块里提三次也只算一处
+        const caption = state.captions && state.captions.get(key);
+        if (caption && flat.includes(caption)) continue;   // 这就是它自己的图注
+        seen.add(key);
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(c);
+      }
+    }
+    return map;
+  }
+
+  /** 卡片底部的跳转条。没有提及就明说，不要留一个空的横条。
+
+      按**页**去重：同一页常常被切成两块（比如表的正文流和跨栏段落），
+      两块各算一处就会显示成「p.5 p.5」，看着像重复。 */
+  function captionRefs(key, page) {
+    const hits = (state.mentions && state.mentions.get(key)) || [];
+    if (!hits.length) {
+      // 正文里没按编号提过（只有图注自己写着），也别什么都不给：
+      // 至少能把人送到图注那一页，措辞要说清"这只是图注所在页"
+      const chunk = (state.chunks || []).find(
+        (c) => Number(page) >= c.page_start && Number(page) <= c.page_end,
+      );
+      return el('div', { class: 'vrefs' },
+        el('span', {}, '正文未按编号提及'),
+        chunk ? el('button', {
+          type: 'button', title: chunk.section || '',
+          on: { click: () => jumpToMention(chunk, key) },
+        }, `仅图注 p.${page}`) : '');
+    }
+    const byPage = [];
+    const seenPage = new Set();
+    for (const c of hits) {
+      if (seenPage.has(c.page_start)) continue;
+      seenPage.add(c.page_start);
+      byPage.push(c);
+    }
+    const show = byPage.slice(0, 4);
+    const nodes = [el('span', {}, '正文提到：')];
+    for (const c of show) {
+      nodes.push(el('button', {
+        type: 'button', title: c.section || '',
+        on: { click: () => jumpToMention(c, key) },
+      }, `p.${c.page_start}`));
+    }
+    if (byPage.length > show.length) {
+      nodes.push(el('span', {}, `另有 ${byPage.length - show.length} 页`));
+    }
+    return el('div', { class: 'vrefs' }, ...nodes);
+  }
+
+  /** 正文编号 → 图表卡片。图表栏懒解析：没解析过就先解析，落地后再定位。 */
+  function jumpToCard(key) {
+    setSideTab('visual');
+    if (state.visuals) { flashCard(key); return; }
+    state.pendingFig = key;
+    if (!state.visualLoading && state.paper) loadVisuals(state.paper.id);
+  }
+
+  function flashCard(key) {
+    const node = $('visual-body').querySelector(`[data-figkey="${CSS.escape(key)}"]`);
+    if (!node) return;
+    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    node.classList.add('flash');
+    setTimeout(() => node.classList.remove('flash'), 1500);
+  }
+
+  /** 卡片 → 正文：跳到那一块，并把编号闪出来（和引用标记同一套高亮）。 */
+  function jumpToMention(chunk, key) {
+    goTo('reader');
+    renderChunk(chunk);
+    syncOutline(chunk);
+    const marks = [...$('page-text').querySelectorAll('[data-figkey]')]
+      .filter((n) => n.dataset.figkey === key);
+    if (marks.length) flash(marks[0]);
+    else showNote(`已跳到 p.${chunk.page_start}，但这一块里没有可高亮的编号`, 'info');
   }
 
   /** 一张表：真 <table>，不是把行拼成一串文字 —— 数字要留在自己那一格里。 */
   function tableCard(t) {
     const body = capBody(t.caption);
-    return el('div', { class: 'figcard' },
+    const key = keyOfLabel('table', t.label);
+    return el('div', { class: 'figcard', 'data-figkey': key },
       el('div', { class: 'vcap' },
         el('span', {}, t.label || '表格'),
         el('span', { class: 'pg' }, `p.${t.page} · ${t.n_rows}×${t.n_cols}`)),
@@ -2274,13 +2468,15 @@ svg{width:100%;height:auto;display:block}
             ...Array.from({ length: t.n_cols }, (_, c) => {
               const cell = row[c] === undefined ? '' : row[c];
               return i === 0 ? el('th', {}, cell) : el('td', {}, cell);
-            })))))));
+            })))))),
+      key ? captionRefs(key, t.page) : '');
   }
 
   /** 一幅插图：缩略图由后端按版面重渲染，直接给 <img> 用，省得下载几 MB 原图。 */
   function figureCard(f) {
     const body = capBody(f.caption);
-    return el('div', { class: 'figcard' },
+    const key = keyOfLabel('figure', f.label);
+    return el('div', { class: 'figcard', 'data-figkey': key },
       el('div', { class: 'vcap' },
         el('span', {}, f.label || `插图 ${f.index + 1}`),
         el('span', { class: 'pg' }, `p.${f.page}`)),
@@ -2293,7 +2489,8 @@ svg{width:100%;height:auto;display:block}
           },
         },
       }),
-      body ? el('p', { class: 'note', style: 'margin:0' }, body) : '');
+      body ? el('p', { class: 'note', style: 'margin:0' }, body) : '',
+      key ? captionRefs(key, f.page) : '');
   }
 
   /** 正文 → 参考文献。找不到就明说，不要静默什么都不发生。 */
