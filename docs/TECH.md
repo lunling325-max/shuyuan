@@ -272,6 +272,24 @@ Transformer 的 `Table 2` 同样还原成功。
 
 *图 7　插图按面积过滤后单独抽出（过滤掉图标与整页扫描位图），Transformer 架构图里的 `Multi-Head Attention`、`Add & Norm` 等框内文字仍清晰可读。*
 
+### 5.4 章节标题：字号门槛是量出来的
+
+"编号 + 空格 + 内容"这条判据不看字号，图表里的碎字因此会被抓成章节标题
+（FSA 论文里冒出 `64 Seqlen (K)`、`2.78 H100 NVL`、`Q3 Q6` 三条）。修法是加前置判据：
+**比正文小到一定比例的段落，直接不当标题**。门槛在第一版取 0.9，部署后 FSA 的
+**全部子章节一起消失** —— LaTeX 双栏模板的 `\subsection` 本来就比正文小一号。
+
+实测分布（正文 10.0pt）才是依据：
+
+| 类别 | 字号 | 占正文 |
+|---|---|---|
+| 一级标题 | 9.9 ~ 10.0 | 0.99 ~ 1.00 |
+| 真子章节 | 8.41 ~ 8.86 | 0.84 ~ 0.89 |
+| 图表碎字 | 3.2 ~ 5.5 | 0.32 ~ 0.55 |
+
+空档在 0.55 与 0.84 之间，门槛落在 **0.7**：同一份 PDF 的章节路径从 17（含 5 条假路径、
+2 条子章节挂错父级）收敛到 14（9 条子章节全部归位、0 条假路径）。详 E-027。
+
 ---
 
 ## 6. 关键技术四：Agent 编排
@@ -492,6 +510,6 @@ apps/api/app/
   agent/        planner.py（两阶段规划）、registry.py（10 个工具）
   analysis/     chart.py（手写 SVG 出图）
 apps/web/       index.html（单文件前端）、logo.svg、logo-lockup.svg
-docs/           EXPERIMENTS.md（26 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
+docs/           EXPERIMENTS.md（27 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
 scripts/        eval_qa.py + eval_questions.json（端到端评测：引用准确率 / 拒答正确率）
 ```
