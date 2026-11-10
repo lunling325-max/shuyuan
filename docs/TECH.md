@@ -453,6 +453,7 @@ LangGraph 这类框架提供的核心价值是状态机与时序控制。本系�
 | 启动 | `./scripts/dev.sh`（Windows 用 `.\scripts\dev.ps1`），唯一前置是 `uv` |
 | 部署 | `./scripts/deploy_remote.sh`，一条命令打包→上传→装 Docker→加 swap→构建→探活 |
 | 实测内存 | 冷启动 13 MB；导入应用后 251 MB；3 篇索引完成后 385 MB；**13 篇（260 页 / 531 块）569 MB** —— 约 12 MB／篇（2C4G 机器，E-026） |
+| 演示库现状 | **14 篇 / 265 页 / 538 块**。第 14 篇《GLU Variants Improve Transformer》是 2026-11-10 走「每日推荐 → 入库」加进来的，留作那条链路线上验证的实物（E-033） |
 | 首次构建 | 改用阿里云 Debian 源后 6 分钟（原 13 分钟里 12 分钟耗在 `deb.debian.org` 拉 10 MB 的 `libgomp1`，实测 13.8 kB/s；换源后同一文件 3.0 MB/s） |
 
 ### 8.2 降级策略
