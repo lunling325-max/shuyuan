@@ -447,7 +447,8 @@ LangGraph 这类框架提供的核心价值是状态机与时序控制。本系�
 
 | 项 | 数值 |
 |---|---|
-| 自动化测试 | **468 项通过**（`uv run pytest -q`） |
+| 自动化测试 | **469 项通过**（`uv run pytest -q`） |
+| 键盘可达 | 导航、文献库每行、参考文献行、PageRank 榜都 Tab 得到，Enter／空格激活；实测按 Enter 从 `p.1` 跳到 `p.3`（E-033） |
 | 运行时依赖 | 8 个 |
 | 启动 | `./scripts/dev.sh`（Windows 用 `.\scripts\dev.ps1`），唯一前置是 `uv` |
 | 部署 | `./scripts/deploy_remote.sh`，一条命令打包→上传→装 Docker→加 swap→构建→探活 |
@@ -530,7 +531,7 @@ Docker 两阶段构建，容器内以 `appuser`（uid 10001）非 root 运行，
 | 扫描件 OCR | 词级 F1（72 dpi） | 0.866（字符错误率 9.2%） |
 | 表格还原 | 行×列正确归属 | GPT-3 Table 2.1 → 11 行；Transformer Table 2 → 11 行 |
 | 解析耗时 | 首解析 / 命中缓存 | 3.2 s（15 页）/ 0.00 s；10.6 s（75 页前 40 页） |
-| 工程 | 测试 | 468 项全通过 |
+| 工程 | 测试 | 469 项全通过 |
 | 部署 | 端到端 | 公网问答实测：答"h = 8"，回溯第 5 页，`exact: true`、`similarity: 1.0` |
 | **端到端（24 题人工标注）** | **引用准确率 / 拒答正确率** | **53/53 = 100% / 9/9 = 100%**（E-025） |
 | 规模（7 → 13 篇） | 同一套题单的稳定性 | 引用 53/53、拒答 9/9 不变，中位 1851 → 2005 ms（E-026） |
@@ -570,7 +571,7 @@ Docker 两阶段构建，容器内以 `appuser`（uid 10001）非 root 运行，
 uv run python scripts/seed_demo.py
 
 # 3. 跑测试
-cd apps/api && uv run pytest -q  # 468 passed
+cd apps/api && uv run pytest -q  # 469 passed
 
 # 4. 检索评测（可冻结 LLM 改写结果做对比）
 uv run python scripts/eval_retrieval.py --dense / --hybrid
@@ -612,7 +613,7 @@ apps/api/app/
   agent/        planner.py（两阶段规划）、registry.py（10 个工具）
   analysis/     chart.py（手写 SVG 出图）
 apps/web/       index.html（单文件前端）、logo.svg、logo-lockup.svg
-docs/           EXPERIMENTS.md（32 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
+docs/           EXPERIMENTS.md（33 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
 scripts/        eval_qa.py + eval_questions.json（端到端评测：引用准确率 / 拒答正确率）
                 measure_crosslinks.py（图文互链覆盖率：多少张卡片在正文里真的被提到）
 ```

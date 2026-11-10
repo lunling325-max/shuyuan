@@ -11,6 +11,11 @@
     … --width 390       窄屏（同时改视口和 deviceScaleFactor）
     … --js "…"          加载完再执行一段 JS（用来点节点）
     … --wait 1200       执行 JS 之后再等多少毫秒（等动画/请求落地）
+    … --keys Tab,Enter  --wait 之后真的按键盘（走 CDP，事件是 trusted 的）。
+                        合成 KeyboardEvent 触发不了原生按钮的默认行为，
+                        测"键盘能不能用"必须用这个
+    … --wait2 5000      再等多少毫秒之后执行 --js2（等 --js 触发的事做完）
+    … --js2 "…"         读执行完的状态，和 --js 的返回值对照看
 """
 
 from __future__ import annotations
@@ -65,8 +70,45 @@ class Cdp:
                 return msg.get("result", {})
 
 
+# 键名 -> (windowsVirtualKeyCode, key, code)
+KEY_CODES = {
+    "Tab": (9, "Tab", "Tab"),
+    "Enter": (13, "Enter", "Enter"),
+    "Escape": (27, "Escape", "Escape"),
+    "Space": (32, " ", "Space"),
+    "ArrowLeft": (37, "ArrowLeft", "ArrowLeft"),
+    "ArrowUp": (38, "ArrowUp", "ArrowUp"),
+    "ArrowRight": (39, "ArrowRight", "ArrowRight"),
+    "ArrowDown": (40, "ArrowDown", "ArrowDown"),
+}
+
+
+def press_keys(cdp: "Cdp", spec: str) -> None:
+    """真的按键盘（走 CDP 输入通道，事件是 trusted 的）。
+
+    为什么非要用真按键：`element.dispatchEvent(new KeyboardEvent('keydown'))`
+    能被 JS 监听器收到，但**不会**触发浏览器给原生按钮的默认行为 ——
+    <button> 上的 Enter 是浏览器把它翻译成 click 的，合成事件没这待遇。
+    用合成事件测"键盘能不能用"，原生的永远测不出来（会误报成坏了）。
+    """
+    for name in (n.strip() for n in spec.split(",")):
+        if not name:
+            continue
+        if name not in KEY_CODES:
+            raise SystemExit(f"--keys 不认识的键：{name}（可选：{', '.join(KEY_CODES)}）")
+        vk, key, code = KEY_CODES[name]
+        for kind in ("keyDown", "keyUp"):
+            params = dict(type=kind, windowsVirtualKeyCode=vk, nativeVirtualKeyCode=vk,
+                          key=key, code=code)
+            if kind == "keyDown" and name in ("Enter", "Space"):
+                params["text"] = "\r" if name == "Enter" else " "
+            cdp.call("Input.dispatchKeyEvent", **params)
+            time.sleep(0.05)
+        time.sleep(0.08)
+
+
 def shoot(url: str, out: Path, width: int, height: int, dark: bool, js: str, wait: int,
-          js2: str = "", wait2: int = 0) -> None:
+          js2: str = "", wait2: int = 0, keys: str = "") -> None:
     port = 9333
     profile = tempfile.mkdtemp(prefix="shoot-")
     proc = subprocess.Popen(
@@ -117,12 +159,18 @@ def shoot(url: str, out: Path, width: int, height: int, dark: bool, js: str, wai
             elif value not in (None, ""):
                 print(f"eval → {value}")
             time.sleep(wait / 1000)
+        if keys:
+            # 放在 --wait 之后：先让 --js 把焦点摆好，按键才有地方落
+            press_keys(cdp, keys)
         if js2:
+            # wait2 是"等 js 触发的那件事做完"再读状态，所以必须先睡再执行。
+            # 以前睡在 js2 之后——睡的是截图之前那一下，等于什么也没等，
+            # 上传/生成这类慢操作永远读到"进行中"。
+            time.sleep(wait2 / 1000)
             res = cdp.call("Runtime.evaluate", expression=js2, awaitPromise=True,
                            returnByValue=True, timeout=EVAL_TIMEOUT_MS)
             value = res.get("result", {}).get("value")
             print(f"eval2 → {value if not res.get('exceptionDetails') else '异常'}")
-            time.sleep(wait2 / 1000)
         data = cdp.call("Page.captureScreenshot", format="png")["data"]
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(base64.b64decode(data))
@@ -147,8 +195,9 @@ def main() -> int:
     ap.add_argument("--wait", type=int, default=700)
     ap.add_argument("--js2", default="", help="--wait 之后再执行一段，用来读第一段执行后的状态")
     ap.add_argument("--wait2", type=int, default=0)
+    ap.add_argument("--keys", default="", help="--wait 之后按的键，逗号分隔，如 Tab,Enter")
     a = ap.parse_args()
-    shoot(a.url, Path(a.out), a.width, a.height, a.dark, a.js, a.wait, a.js2, a.wait2)
+    shoot(a.url, Path(a.out), a.width, a.height, a.dark, a.js, a.wait, a.js2, a.wait2, a.keys)
     return 0
 
 

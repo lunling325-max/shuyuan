@@ -206,6 +206,8 @@ h1{font-size:var(--fs-xl);margin:0 0 2px;letter-spacing:-.015em}
 .batch .row .st{flex:none;font-variant-numeric:tabular-nums}
 .batch .row.ok .st{color:var(--ok,#1a7f4b)}
 .batch .row.bad .st{color:var(--warn)}
+/* 「库内已有同一份文件」既不是成功也不是失败，别染成红色 */
+.batch .row.dup .st{color:var(--ink-2)}
 .batch .row .why{flex:none;max-width:52%;color:var(--ink-3)}
 .chip{
   display:inline-block;padding:1px 7px;border-radius:5px;font-size:var(--fs-xs);
@@ -247,6 +249,13 @@ tbody tr:hover{background:var(--ring)}
 }
 .rowdel:hover{color:var(--warn);border-color:var(--warn)}
 .rowdel.confirm{color:#fff;background:var(--warn);border-color:var(--warn);font-weight:560}
+/* 标题按钮：只是给键盘一个落脚点，长得必须和普通标题一模一样 */
+.rowopen{
+  background:none;border:0;padding:0;font:inherit;color:inherit;
+  text-align:left;cursor:pointer;max-width:100%;
+}
+.rowopen b{font-weight:640}
+.rowopen:focus-visible{outline:2px solid var(--s1);outline-offset:3px}
 .paper-bar{display:flex;align-items:center;gap:var(--sp-3);width:100%;max-width:560px}
 /* 标签不能被压缩折行：「当前文献」在小工具条里被挤成「当前文」/「献」两行，
    看上去像排版坏了。flex 子项默认 min-width:auto 会收缩，这里明确不缩。 */
@@ -1353,6 +1362,22 @@ svg{width:100%;height:auto;display:block}
     return node;
   }
 
+  /** 把 div / 柱状条这类容器变成能用键盘触发的按钮。
+      只挂 click 的话，鼠标用户一路点得通，键盘用户 Tab 直接跳过去——
+      偏偏这些都长得像能点的（指针手型、悬停变色），看着就不对。
+      Enter 和空格都算，和原生按钮一致；空格要 preventDefault，
+      否则页面会跟着往下滚。 */
+  function clickable(node, fn, label) {
+    node.setAttribute('role', 'button');
+    node.tabIndex = 0;
+    if (label) node.setAttribute('aria-label', label);
+    node.addEventListener('click', fn);
+    node.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(e); }
+    });
+    return node;
+  }
+
   function showNote(text, kind = 'info') {
     const box = $('upload-status');
     if (!box) return;
@@ -1481,7 +1506,13 @@ svg{width:100%;height:auto;display:block}
       // 数据换了页却没换，看着像"点了没反应"。
       const tr = el('tr', { on: { click: () => openInReader(p.id) }, style: 'cursor:pointer' },
         el('td', {},
-          el('b', {}, p.title),
+          // 整行是 div/tr 层面的点击，键盘走不进来。标题本身做成一个真按钮：
+          // 行仍可点，键盘 Tab 停在标题上按 Enter 也能打开，语义还是表格行。
+          el('button', {
+            class: 'rowopen', type: 'button',
+            title: `打开《${p.title}》`,
+            on: { click: (e) => { e.stopPropagation(); openInReader(p.id); } },
+          }, el('b', {}, p.title)),
           versions > 1 ? el('span', { class: 'chip', style: 'margin-left:8px' },
             `同一篇 ${versions} 个版本`) : null,
           el('div', { class: 'note', style: 'margin:2px 0 0' }, meta)),
@@ -1940,10 +1971,15 @@ svg{width:100%;height:auto;display:block}
       showNote(`仍在解析 ${file.name}…扫描件要逐页走 OCR，十几页通常需要一两分钟。`);
     }, 8000);
     try {
+      // 同一个文件再传一次，后端原样返回库内那篇（不报重复也不新建）。
+      // 前端若照旧说"已解析"，用户会以为自己刚多了一篇——先记下库里有哪些。
+      const known = new Set((state.papers || []).map((p) => p.id));
       const form = new FormData();
       form.append('file', file);
       const paper = await api(`/papers?on_duplicate=${onDuplicate}`, { method: 'POST', body: form });
-      showNote(`已解析：${paper.title} · ${paper.pages} 页 · ${paper.chunks} 块`);
+      showNote(known.has(paper.id)
+        ? `库内已有完全相同的文件，未新增条目：${paper.title}`
+        : `已解析：${paper.title} · ${paper.pages} 页 · ${paper.chunks} 块`);
       state.papers = await api('/papers');
       renderLibrary();
       renderDupAlert(paper, file);   // 判定结果只在上传响应里，列表接口不返回
@@ -1984,8 +2020,17 @@ svg{width:100%;height:auto;display:block}
       renderLibrary();
       renderBatch(items);
       GRAPH.data = null;
-      const ok = items.filter((i) => i.ok && !i.skipped).length;
-      showNote(`批量上传完成：成功 ${ok} / ${items.length}，失败 ${items.length - ok}`);
+      // skipped 有两种：内容相同的（ok，什么都没变）和按「保留」策略没入库的。
+      // 以前两者都算进"失败"，同一份文件再传一次就报"失败 1"——把人吓一跳
+      const added = items.filter((i) => i.ok && !i.skipped).length;
+      const same = items.filter((i) => i.ok && i.skipped).length;
+      const kept = items.filter((i) => !i.ok && i.skipped).length;
+      const failed = items.length - added - same - kept;
+      const parts = [`成功 ${added}`];
+      if (same) parts.push(`库内已有 ${same}`);
+      if (kept) parts.push(`跳过 ${kept}`);
+      if (failed) parts.push(`失败 ${failed}`);
+      showNote(`批量上传完成：${parts.join('，')}`);
     } catch (err) {
       showNote(`批量上传失败：${err.message}`, 'error');
     } finally {
@@ -2002,14 +2047,20 @@ svg{width:100%;height:auto;display:block}
     box.replaceChildren(
       el('h3', {}, `批量上传结果 · ${items.length} 个文件`),
       ...items.map((it) => {
-        const state = it.ok && !it.skipped ? 'ok' : 'bad';
-        const label = !it.ok && it.skipped ? '已跳过' : it.ok ? '已入库' : '失败';
+        // 四种结果，别把"内容相同、没新增"和"失败"混成一种颜色：
+        // 同一份文件再传一次是正常操作，染红会让人以为传坏了
+        const kind = it.ok ? (it.skipped ? 'dup' : 'ok') : 'bad';
+        const label = it.ok && it.skipped ? '库内已有'
+          : it.ok ? '已入库'
+            : it.skipped ? '已跳过' : '失败';
         const p = it.paper;
-        return el('div', { class: `row ${state}` },
+        return el('div', { class: `row ${kind}` },
           el('span', { class: 'name', title: it.filename }, it.filename),
           el('span', { class: 'st' }, label),
           it.ok && p
-            ? el('span', { class: 'why' }, `${p.pages} 页 · ${p.chunks} 块${p.duplicate_of ? ' · 库内已有另一版本' : ''}`)
+            ? el('span', { class: 'why' }, it.skipped
+              ? '内容与库内那份完全一致，未新增条目'
+              : `${p.pages} 页 · ${p.chunks} 块${p.duplicate_of ? ' · 库内已有另一版本' : ''}`)
             : el('span', { class: 'why', title: it.error || '' }, it.error || ''),
         );
       }),
@@ -2256,18 +2307,14 @@ svg{width:100%;height:auto;display:block}
     // 扫描件的参考文献标题同样来自 OCR：translatc / statistica 这种残渣
     // 会被当成"标题里有错别字"，得先说清是识别误差，不是解析器读错了
     const head = state.paper && state.paper.scanned ? [scannedNote()] : [];
-    box.replaceChildren(...head, ...refs.map((r) => el('div', {
-      class: 'refrow', 'data-key': r.key, role: 'button', tabindex: '0',
-      on: {
-        click: () => jumpToCite(r.key),
-        keydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jumpToCite(r.key); } },
-      },
+    box.replaceChildren(...head, ...refs.map((r) => clickable(el('div', {
+      class: 'refrow', 'data-key': r.key,
     },
     el('span', { class: 'k' }, `[${r.key}]`),
     r.parsed
       ? el('span', {}, `${r.title}${r.year ? ` (${r.year})` : ''}`)
       : el('span', { class: 'raw' }, r.raw.slice(0, 220)),
-    )));
+    ), () => jumpToCite(r.key), `跳到正文里引用 [${r.key}] 的位置`)));
   }
 
   /* 图表栏要逐页跑 find_tables()（约 0.29 秒/页），40 页上限就是十几秒。
@@ -3392,14 +3439,13 @@ svg{width:100%;height:auto;display:block}
     }
     const max = Math.max(...papers.map((p) => p.rank), 1e-9);
     papers.forEach((p) => {
-      const row = el('div', { class: 'bar-row', style: 'cursor:pointer' },
+      const row = clickable(el('div', { class: 'bar-row', style: 'cursor:pointer' },
         el('div', { class: 'nm' }, el('b', {}, shortLabel(p.label, 44)),
           el('span', { style: 'color:var(--ink-3)' }, ` · 被引 ${p.cited_by}`)),
         el('div', { class: 'bartrack' },
           el('div', { class: 'barfill', style: `width:${Math.max(2, (p.rank / max) * 100).toFixed(1)}%` })),
         el('div', { class: 'bar-val' }, p.rank.toFixed(3)),
-      );
-      row.addEventListener('click', () => selectNode(p.id));
+      ), () => selectNode(p.id), `在引用图里选中 ${p.label}`);
       box.append(row);
     });
     // 为什么库外文献不进排名：说清楚，别让人以为是漏算
@@ -4388,14 +4434,14 @@ svg{width:100%;height:auto;display:block}
 
     const refsBox = $('rv-refs');
     refsBox.replaceChildren(...(data.references.length
-      ? data.references.map((r) => el('div', {
+      ? data.references.map((r) => clickable(el('div', {
         class: 'refrow', 'data-n': String(r.n),
-        on: { click: () => jumpToPaper(r.paper_id, r.page) },
       },
       el('span', { class: 'k' }, `[${r.n}]`),
       el('span', {}, `${r.title}${refVersion(r) ? ` ${refVersion(r)}` : ''} · p.${r.page}`),
       el('span', { class: 'raw', style: 'display:block;margin-top:4px' }, `“${r.quote}”`),
-      el('span', { style: 'display:block;margin-top:6px;color:var(--s1)' }, '打开原文 →')))
+      el('span', { style: 'display:block;margin-top:6px;color:var(--s1)' }, '打开原文 →')),
+        () => jumpToPaper(r.paper_id, r.page), `打开原文：${r.title} 第 ${r.page} 页`))
       : [el('p', { class: 'note', style: 'margin:0' }, '本次未检索到可用原文。')]));
 
     const futBox = $('rv-future');
@@ -4535,13 +4581,13 @@ svg{width:100%;height:auto;display:block}
 
     const list = out.evidence || [];
     ev.replaceChildren(...(list.length
-      ? list.map((e, i) => el('div', {
+      ? list.map((e, i) => clickable(el('div', {
         class: 'refrow',
-        on: { click: () => jumpToPaper(e.paper_id, e.page) },
       },
       el('span', { class: 'k' }, `[${i + 1}]`),
       el('span', {}, `${e.title} · p.${e.page} · #${e.chunk_index}`),
-      el('span', { class: 'raw', style: 'display:block;margin-top:4px' }, `“${e.quote}”`)))
+      el('span', { class: 'raw', style: 'display:block;margin-top:4px' }, `“${e.quote}”`)),
+      () => jumpToPaper(e.paper_id, e.page), `打开原文：${e.title} 第 ${e.page} 页`))
       : [el('p', { class: 'note', style: 'margin:0' },
         '本次结论未关联原文段落 —— 可能来自图谱统计或元信息，无需引用正文。')]));
   }
