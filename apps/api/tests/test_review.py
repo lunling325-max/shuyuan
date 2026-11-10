@@ -156,6 +156,29 @@ def test_invented_evidence_numbers_are_dropped(client, monkeypatch):
     assert body["references"] == [], "没有任何真实编号被引用时 references 应为空"
 
 
+def test_citation_numbers_are_renumbered_without_gaps(client, monkeypatch):
+    """模型只用到一部分证据时，编号不能留空洞。
+
+    实测现象：模型引用 12 条证据里的 11 条（跳过 7），右侧引用栏列出
+    [1]…[6]、[8]…[12] —— 读起来像漏了一行。编号只是给人看的指针，
+    按引用顺序重排成 1..K，正文里的编号同步改。
+    """
+    sections = [
+        {"heading": "研究现状", "points": [{"text": "要点甲", "evidence": [2, 3]}]},
+        {"heading": "方法脉络", "points": [{"text": "要点乙", "evidence": [3]}]},
+        {"heading": "研究空白", "points": [{"text": "空白", "evidence": [2]}]},
+    ]
+    future = [{"idea": "方向", "status": "open", "evidence": [3], "why": "依据"}]
+    monkeypatch.setattr("app.llm.client.chat_json", _fake_llm(sections, future))
+
+    body = client.post("/api/review", json={"topic": TOPIC, "max_papers": 2}).json()
+
+    assert [ref["n"] for ref in body["references"]] == [1, 2]
+    assert body["sections"][0]["points"][0]["evidence"] == [1, 2]
+    assert body["sections"][1]["points"][0]["evidence"] == [2]
+    assert body["future"][0]["evidence"] == [2]
+
+
 def test_llm_outage_degrades_but_keeps_references_and_raw_future(client, monkeypatch):
     from app.llm.client import LLMError
 

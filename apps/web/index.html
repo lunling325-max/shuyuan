@@ -566,6 +566,15 @@ svg{width:100%;height:auto;display:block}
 .plan .a{font-family:var(--mono);font-size:var(--fs-xs);color:var(--ink-3);word-break:break-all}
 .plan .why{color:var(--ink-2);font-size:var(--fs-xs);line-height:1.55;margin-top:3px}
 .plan .drop{color:var(--warn);font-size:var(--fs-xs);margin-top:2px}
+/* 计划里标出「哪几步真跑了」：模型提前收尾时，5 步计划只执行 1 步，
+   不标的话读者以为下面 4 步也跑过了 */
+.plan .mark{
+  flex:none;margin-left:auto;padding-left:8px;font-size:var(--fs-xs);
+  color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+.plan .mark.done{color:var(--good)}
+.plan li.skipped .t{color:var(--ink-3)}
+.plan li.skipped .a,.plan li.skipped .why{opacity:.72}
 /* 轨迹：一行一步，失败的整行染色，别只靠一个小图标 */
 .trace{border:1px solid var(--hair);border-radius:10px;overflow:hidden;background:var(--surface-2)}
 .trace .trow{display:flex;gap:9px;align-items:baseline;padding:8px 11px;border-top:1px solid var(--hair);font-size:var(--fs-xs)}
@@ -639,6 +648,9 @@ svg{width:100%;height:auto;display:block}
   .swipe-hint{display:block}
   .side{max-height:none}
   .copilot{grid-template-columns:minmax(0,1fr)}
+  /* 综述和 Agent 也是两栏：漏了这两条，390px 下计划文字被挤成一列竖排 */
+  .review{grid-template-columns:minmax(0,1fr)}
+  .agent{grid-template-columns:minmax(0,1fr)}
   .split{grid-template-columns:minmax(0,1fr)}
   .pane{max-height:52vh}
 }
@@ -4453,22 +4465,33 @@ svg{width:100%;height:auto;display:block}
       .slice(0, 96);
   }
 
-  function renderPlan(steps, notes) {
+  function renderPlan(steps, notes, trace) {
     const box = $('ag-plan-out');
     if (!steps || !steps.length) {
       box.replaceChildren(el('p', { class: 'note', style: 'margin:0' }, '本次未产出计划。'));
       return;
     }
+    // 计划和轨迹是两份数据：计划列了 5 步、实际只跑了 1 步时，
+    // "哪几步真跑了"不该让读者去下方轨迹里比对编号。有轨迹记录的就是执行过的。
+    const seen = new Map((trace || []).map((t) => [t.step, t]));
     box.replaceChildren(
-      el('ol', { class: 'plan' }, ...steps.map((s) => el('li', {},
-        el('span', { class: 'n' }, String(s.id)),
-        el('div', { class: 'body' },
-          el('div', {},
-            el('span', { class: 't' }, s.tool),
-            el('span', { class: 'a', style: 'margin-left:8px' }, argsLine(s.args)),
-            s.dropped_reason ? el('span', { class: 'drop' }, ` · 已丢弃：${s.dropped_reason}`) : ''),
-          s.why ? el('div', { class: 'why' }, s.why) : ''),
-      ))),
+      el('ol', { class: 'plan' }, ...steps.map((s) => {
+        const ran = seen.get(s.id);
+        // 工具快于 1 毫秒时 took_ms 取整成 0，写成「已执行 · 0 ms」像坏了一样
+        const mark = !trace ? ''
+          : ran && !ran.dropped_reason
+            ? el('span', { class: 'mark done' }, ran.took_ms ? `已执行 · ${ran.took_ms} ms` : '已执行')
+            : el('span', { class: 'mark' }, ran ? '未执行' : '跳过');
+        return el('li', { class: trace && !ran ? 'skipped' : '' },
+          el('span', { class: 'n' }, String(s.id)),
+          el('div', { class: 'body' },
+            el('div', {},
+              el('span', { class: 't' }, s.tool),
+              el('span', { class: 'a', style: 'margin-left:8px' }, argsLine(s.args)),
+              s.dropped_reason ? el('span', { class: 'drop' }, ` · 已丢弃：${s.dropped_reason}`) : ''),
+            s.why ? el('div', { class: 'why' }, s.why) : ''),
+          mark);
+      })),
       ...(notes && notes.length
         ? [el('p', { class: 'note', style: 'margin:12px 0 0' }, `服务端说明：${notes.join('；')}`)]
         : []),
@@ -4486,7 +4509,8 @@ svg{width:100%;height:auto;display:block}
       el('span', { class: 't' }, `#${t.step} ${t.tool}`),
       el('span', { class: 'obs' },
         t.dropped_reason ? `未执行：${t.dropped_reason}` : (t.observation_preview || '').slice(0, 160)),
-      el('span', { class: 'ms' }, t.took_ms == null ? '' : `${t.took_ms} ms`),
+      // 0 ms 是"快到取整成 0"，写 0 像没测
+      el('span', { class: 'ms' }, t.took_ms == null ? '' : (t.took_ms ? `${t.took_ms} ms` : '<1 ms')),
     ))));
   }
 
@@ -4542,7 +4566,8 @@ svg{width:100%;height:auto;display:block}
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ task }),
         });
-      renderPlan(out.steps || (out.plan && out.plan.steps), out.notes);
+      renderPlan(out.steps || (out.plan && out.plan.steps), out.notes,
+        mode === 'run' ? out.trace : null);
       if (mode === 'run') {
         renderTrace(out.trace);
         renderAgentAnswer(out);

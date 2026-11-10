@@ -162,6 +162,16 @@ browser
 来"支撑"一个错误结论。当前的对策是把它限制在"本轮证据块内引用"，失败的代价由
 `weak` 状态与人工确认承担。**这是我们明确没解决的问题**，见 §10。
 
+### 3.4 编号是给人看的指针，不是证据的身份
+
+综述里给模型的证据块按 [1..N] 编号，模型只回编号、原文由服务端回填。问题出在
+"只回一部分编号"的时候：模型引用 12 条证据里的 11 条（跳过 7），右侧引用栏就会列出
+`[1]…[6]、[8]…[12]` —— 读者看到的是"少了一行"，而不是"这一条没被用到"。
+
+修法是在回填前**按引用顺序重排成 1..K**，正文里的编号同步改。判据不变（编号仍然只能
+来自本轮证据），变的是呈现：可被核对的证据一条不少，且没有空洞。写作 Copilot 的框架
+生成一直是这么做的，两条链路现在一致（E-032）。
+
 ---
 
 ## 4. 关键技术二：跨语言检索
@@ -602,7 +612,7 @@ apps/api/app/
   agent/        planner.py（两阶段规划）、registry.py（10 个工具）
   analysis/     chart.py（手写 SVG 出图）
 apps/web/       index.html（单文件前端）、logo.svg、logo-lockup.svg
-docs/           EXPERIMENTS.md（31 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
+docs/           EXPERIMENTS.md（32 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
 scripts/        eval_qa.py + eval_questions.json（端到端评测：引用准确率 / 拒答正确率）
                 measure_crosslinks.py（图文互链覆盖率：多少张卡片在正文里真的被提到）
 ```

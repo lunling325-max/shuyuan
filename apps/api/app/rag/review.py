@@ -25,7 +25,7 @@ solved 的含义是"已被库里另一篇后续论文解决"；判断本身依�
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Sequence
 
 from app.rag.evidence import body_chunks, is_reference_list
@@ -498,11 +498,20 @@ def build_review(
         {n for section in sections for point in section.points for n in point.evidence}
         | {n for idea in future for n in idea.evidence}
     )
+    # 编号是给人看的指针，不是证据的身份证：模型只用到 12 条证据里的 11 条时，
+    # 原始编号会留下空洞（[1]…[6]、[8]…[12]，没有 [7]），右侧引用栏读起来
+    # 像漏了一行。按引用顺序重排成 1..K，正文里的编号同步改。
+    renum = {old: new for new, old in enumerate(cited, start=1)}
+    for section in sections:
+        for point in section.points:
+            point.evidence = [renum[n] for n in point.evidence]
+    for idea in future:
+        idea.evidence = [renum[n] for n in idea.evidence]
     return ReviewResult(
         topic=topic,
         papers=paper_refs,
         sections=sections,
-        references=[by_n[n] for n in cited],
+        references=[replace(by_n[n], n=renum[n]) for n in cited],
         future=future,
         degraded=False,
         note=note,

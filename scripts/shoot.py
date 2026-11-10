@@ -30,6 +30,10 @@ from websockets.sync.client import connect
 
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 
+# `--js` 里最长的等待是等一篇综述/一次 Agent 执行跑完，设 5 分钟。
+# 注意 Chrome 那边的默认上限很短（约 30 秒），不显式给就会中途报错。
+EVAL_TIMEOUT_MS = 300_000
+
 
 def _wait_target(port: int, timeout: float = 20.0) -> str:
     deadline = time.time() + timeout
@@ -103,7 +107,10 @@ def shoot(url: str, out: Path, width: int, height: int, dark: bool, js: str, wai
             ))
             time.sleep(0.2)
         if js:
-            res = cdp.call("Runtime.evaluate", expression=js, awaitPromise=True, returnByValue=True)
+            # timeout 必须显式给：`awaitPromise` 的默认上限远小于"等模型写完一篇综述"，
+            # 超时后 CDP 报 "Inspected target navigated or closed"，看着像页面崩了
+            res = cdp.call("Runtime.evaluate", expression=js, awaitPromise=True,
+                           returnByValue=True, timeout=EVAL_TIMEOUT_MS)
             value = res.get("result", {}).get("value")
             if res.get("exceptionDetails"):
                 print(f"eval ✗ {res['exceptionDetails'].get('exception', {}).get('description', '')[:200]}")
@@ -111,7 +118,8 @@ def shoot(url: str, out: Path, width: int, height: int, dark: bool, js: str, wai
                 print(f"eval → {value}")
             time.sleep(wait / 1000)
         if js2:
-            res = cdp.call("Runtime.evaluate", expression=js2, awaitPromise=True, returnByValue=True)
+            res = cdp.call("Runtime.evaluate", expression=js2, awaitPromise=True,
+                           returnByValue=True, timeout=EVAL_TIMEOUT_MS)
             value = res.get("result", {}).get("value")
             print(f"eval2 → {value if not res.get('exceptionDetails') else '异常'}")
             time.sleep(wait2 / 1000)
@@ -126,6 +134,9 @@ def shoot(url: str, out: Path, width: int, height: int, dark: bool, js: str, wai
 
 
 def main() -> int:
+    # 页面里的返回值什么都可能有：`²`、`ℓ`、`→`。Windows 控制台默认 GBK，
+    # 打印时直接 UnicodeEncodeError，截图已经拍完却拿不到 --js 的结果。
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", required=True)
     ap.add_argument("--out", required=True)
