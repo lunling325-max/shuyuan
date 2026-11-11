@@ -220,7 +220,7 @@ uv run --directory apps/api python ../../scripts/eval_qa.py \
 
 | 文件 | 内容 |
 |---|---|
-| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 11 张实机截图（PDF 17 页，`build/TECH.pdf`） |
+| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 11 张实机截图（PDF 20 页，`build/TECH.pdf`） |
 | [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 35 篇实验记录（E-001–E-035），每条结论带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑与对策） |
