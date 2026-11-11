@@ -43,6 +43,10 @@ uv run uvicorn app.api.main:app --reload --port 8017
 - 界面右上角「＋ 上传 PDF」，一篇篇加；
 - 或者把 PDF 放进仓库根的 `pdf/`，再 `uv run python scripts/seed_demo.py` 批量灌进去。
 
+手边一篇论文都没有的话，从 arXiv 下任意一篇 PDF 即可；演示里用的那份是
+`https://arxiv.org/pdf/1706.03762v7`（Transformer），扫描件对照用的是同一篇的
+`1706.03762v1_scan.pdf`。
+
 其它入口：
 
 - `/docs`　自动生成的 OpenAPI 文档
