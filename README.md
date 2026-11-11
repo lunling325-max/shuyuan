@@ -82,6 +82,8 @@ uv run uvicorn app.api.main:app --reload --port 8017
 apps/api/app/
   parsing/     chunker.py      结构感知切块（段落不切开，标题必开新块，去页眉页脚）
                text_index.py   词级索引，给任意引用文本落回页码 + bbox
+               layout.py       首页版式底层读法（行还原、剔 arXiv 投稿戳）
+               frontmatter.py  首页的作者与机构：只认版面，认不出就留空
                scan.py         扫描件 OCR（RapidOCR）：判扫描页、读序还原、磁盘缓存
                visuals.py      表格与插图：按行×列还原单元格、抓图注、缩略图重渲染
   retrieval/   bm25.py         词法检索 + 单复数归并 + RRF 融合
@@ -164,13 +166,13 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 ## 测试
 
 ```bash
-cd apps/api && uv run pytest -q     # 480 项
+cd apps/api && uv run pytest -q     # 493 项
 ```
 
 其中一部分用例要读真实的演示论文（`pdf/` 不进仓库，见 `.gitignore`，7 份约 43 MB；
 用例按文件名找，需要哪几个写在各测试模块顶部的路径常量里）。
 没有这些文件时它们会 **skip 并写明缺哪个文件**，不会整片变红：从零 clone 下来实测
-`183 passed, 297 skipped`；把 PDF 放进仓库根的 `pdf/` 之后是 `480 passed`。
+`183 passed, 310 skipped`；把 PDF 放进仓库根的 `pdf/` 之后是 `493 passed`。
 
 覆盖：切块的边界条件、BM25 排序与单复数归并、RRF 去重、守卫的三级匹配、
 Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资料库恢复、
@@ -241,8 +243,8 @@ E-038 之后界面是十二个视图（新增「跨文献对比」）。
 
 | 文件 | 内容 |
 |---|---|
-| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 11 张实机截图与创新点说明（PDF 23 页，`build/TECH.pdf`） |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 38 篇实验记录（E-001–E-038），每条结论带实测数字 |
+| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 12 张实机截图与创新点说明（PDF 24 页，`build/TECH.pdf`） |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 39 篇实验记录（E-001–E-039），每条结论带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑与对策） |
 | [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：时间轴、逐段口播、翻车预案；录屏成品 `build/shuyuan-demo.mp4`（6 分 26 秒） |

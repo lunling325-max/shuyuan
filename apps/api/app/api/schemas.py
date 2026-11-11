@@ -70,6 +70,10 @@ class PaperOut(BaseModel):
         description="首页投稿戳上的日期 YYYY-MM-DD（≠ PDF 生成日期，arXiv GenPDF 不写元数据日期）",
     )
     scanned: bool = Field(default=False, description="首页没有文本层，内容来自 OCR")
+    # 首页版面上认出来的作者与机构（赛题模块一要求"作者及机构信息"）。
+    # 认不出就是空列表：扫描件首页没有文本层，这里宁可留空也不猜。
+    authors: list[str] = Field(default_factory=list, description="首页版面认出的作者")
+    affiliations: list[str] = Field(default_factory=list, description="首页版面认出的机构")
     # 只在"刚上传"的响应里填：和库里哪一篇撞了、有多像
     duplicate_of: str | None = None
     duplicate_title: str | None = None

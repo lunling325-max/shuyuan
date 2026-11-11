@@ -26,6 +26,7 @@ from pathlib import Path
 import pymupdf
 
 from app.parsing.chunker import Chunk, chunk_pdf
+from app.parsing.layout import STAMP, line_of, page_lines
 from app.parsing.text_index import TextIndex
 from app.retrieval.bm25 import BM25
 from app.versioning import Relation, classify, jaccard, shingles
@@ -86,6 +87,16 @@ def _chunk(path: Path) -> list[Chunk]:
     return chunk_pdf(str(path), ocr=_ocr_hook())
 
 
+def _front_matter(path: Path):
+    """作者与机构。解析出错就当没认出来 —— 它是加分项，不该让上传失败。"""
+    from app.parsing.frontmatter import FrontMatter, extract_front_matter
+
+    try:
+        return extract_front_matter(path)
+    except Exception:  # noqa: BLE001
+        return FrontMatter()
+
+
 def _clean_filename(filename: str) -> str:
     """只留文件名本身：路径成分与不可打印字符一律去掉。
 
@@ -143,6 +154,10 @@ class Paper:
     # 戳上的日期是 arXiv 自己印的，比元数据可靠，所以另立一栏，不去冒充 created_at。
     arxiv_date: str = ""
     scanned: bool = False  # 首页没有文本层：正文与标题都得靠 OCR 认
+    # 首页版面上认出来的作者与机构（模块一要求）。认不出就是空列表 ——
+    # 扫描件首页没有文本层，这里宁可不写，也不从别处猜一个机构填上去。
+    authors: list[str] = field(default_factory=list)
+    affiliations: list[str] = field(default_factory=list)
     _index: TextIndex | None = field(default=None, repr=False)
     _bm25: BM25 | None = field(default=None, repr=False)
     _fingerprint: set[str] | None = field(default=None, repr=False)
@@ -282,6 +297,11 @@ class PaperRegistry:
                     better = self._title(pdf_path, filename)
                     if better and better != title:
                         title = better
+                # 作者与机构是后加的字段：老 sidecar 里没有这两栏，就地补算一次。
+                # 判据是"键在不在"而不是"列表空不空" —— 扫描件本来就该是空列表，
+                # 每次启动都重算一遍纯属浪费（541 页教材那趟要读首页）。
+                no_front = "authors" not in meta or "affiliations" not in meta
+                front = _front_matter(pdf_path) if no_front else None
                 paper = Paper(
                     id=meta["id"],
                     filename=filename,
@@ -298,9 +318,13 @@ class PaperRegistry:
                     or self._arxiv_version(pdf_path, filename),
                     arxiv_date=meta.get("arxiv_date") or self._arxiv_date(pdf_path),
                     scanned=bool(meta.get("scanned", False)) or self._is_scanned(pdf_path),
+                    authors=meta.get("authors") if not no_front else front.authors,
+                    affiliations=meta.get("affiliations")
+                    if not no_front
+                    else front.affiliations,
                 )
                 self._papers[paper.id] = paper
-                if (paper.title, paper.arxiv_version, paper.scanned, paper.arxiv_date) != (
+                if no_front or (paper.title, paper.arxiv_version, paper.scanned, paper.arxiv_date) != (
                     meta.get("title"),
                     meta.get("arxiv_version") or 0,
                     bool(meta.get("scanned", False)),
@@ -319,6 +343,7 @@ class PaperRegistry:
                 chunks = _chunk(pdf_path)
                 if not chunks:
                     continue
+                front = _front_matter(pdf_path)
                 self._papers[pdf_path.stem] = Paper(
                     id=pdf_path.stem,
                     filename=pdf_path.name,
@@ -332,6 +357,8 @@ class PaperRegistry:
                     arxiv_version=self._arxiv_version(pdf_path, pdf_path.name),
                     arxiv_date=self._arxiv_date(pdf_path),
                     scanned=self._is_scanned(pdf_path),
+                    authors=front.authors,
+                    affiliations=front.affiliations,
                 )
             except Exception:  # noqa: BLE001
                 continue
@@ -438,6 +465,7 @@ class PaperRegistry:
         chunks = _chunk(path)
         pages = self._page_count(path)
         title = self._title(path, filename)
+        front = _front_matter(path)
         paper = Paper(
             id=digest,
             filename=filename,
@@ -451,6 +479,8 @@ class PaperRegistry:
             arxiv_version=self._arxiv_version(path, filename),
             arxiv_date=self._arxiv_date(path),
             scanned=self._is_scanned(path),
+            authors=front.authors,
+            affiliations=front.affiliations,
         )
         with self._lock:
             # 两个请求同时上传同一份文件时，先写入的那个胜出，后一个拿到同一对象，
@@ -473,6 +503,8 @@ class PaperRegistry:
                     "filename": paper.filename,
                     "title": paper.title,
                     "title_v": TITLE_SCHEMA,
+                    "authors": paper.authors,
+                    "affiliations": paper.affiliations,
                     "pages": paper.pages,
                     "uploaded_at": paper.uploaded_at,
                     "created_at": paper.created_at,
@@ -678,7 +710,9 @@ class PaperRegistry:
         return meta if flatten(meta) == flatten(title) else title
 
     # arXiv 左侧那行旋转的投稿戳，字号 20 比标题还大，必须先剔掉
-    _STAMP = re.compile(r"^arxiv:\S+\s*\[", re.IGNORECASE)
+    # （规则搬到 app/parsing/layout.py 与首屏元信息共用，这里留个别名，
+    #  测试和别的调用方还在用 PaperRegistry._STAMP）
+    _STAMP = STAMP
     # 认出来的东西明显不是标题时的兜底判断：章节名、版权行、噪声
     _GENERIC = {
         "abstract", "introduction", "references", "conclusion", "conclusions",
@@ -699,19 +733,11 @@ class PaperRegistry:
 
         整行是 arXiv 投稿戳时返回 None：它自带版本号和日期，两版必然不同，
         留着会让每份论文的标题都变成 `arXiv:1706.03762v7 [cs.CL] …`。
+
+        实现在 `app/parsing/layout.py`：首屏元信息（作者与机构）要同一套读法，
+        两处各写一份就会慢慢走岔。这里保留这个名字，是因为测试与外部调用在用它。
         """
-        parts: list[str] = []
-        size = 0.0
-        for span in line.get("spans", []):
-            text = span.get("text") or ""
-            if not text:
-                continue
-            if PaperRegistry._STAMP.match(" ".join(text.split())):
-                return None
-            parts.append(text)
-            size = max(size, round(float(span["size"]), 1))
-        text = " ".join("".join(parts).split())
-        return (size, text) if text else None
+        return line_of(line)
 
     @staticmethod
     def _title_from_layout(path: Path) -> str | None:
@@ -726,20 +752,7 @@ class PaperRegistry:
 
         行怎么拼见 `_line_of`。这里只管"哪些行算标题"。
         """
-        doc = pymupdf.open(str(path))
-        try:
-            page = doc[0]
-            lines: list[tuple[float, float, float, str]] = []  # (字号, 顶, 底, 文本)
-            for block in page.get_text("dict").get("blocks", []):
-                for line in block.get("lines", []):
-                    got = PaperRegistry._line_of(line)
-                    if got is None:
-                        continue
-                    size, text = got
-                    box = line["bbox"]
-                    lines.append((size, float(box[1]), float(box[3]), text))
-        finally:
-            doc.close()
+        lines = [(ln.size, ln.y0, ln.y1, ln.text) for ln in page_lines(path)]
 
         if not lines:
             return None

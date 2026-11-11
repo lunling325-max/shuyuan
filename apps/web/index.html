@@ -256,7 +256,12 @@ tbody tr:hover{background:var(--ring)}
 }
 .rowopen b{font-weight:640}
 .rowopen:focus-visible{outline:2px solid var(--s1);outline-offset:3px}
-.paper-bar{display:flex;align-items:center;gap:var(--sp-3);width:100%;max-width:560px}
+/* 宽度交给卡片：作者与机构已经挪到下面独立一行，这一行只剩
+   「页数 · 块数 · 版本 · 日期」，再限一个 560 就会把日期截成「2017-06-…」 */
+.paper-bar{display:flex;align-items:center;gap:var(--sp-3);width:100%}
+/* 作者与机构另起一行，占满整条，长名单可以换行 —— 顶栏那行不许换行 */
+.writers{width:100%;margin:0 0 var(--sp-3);line-height:1.5}
+.writers:empty{display:none}
 /* 标签不能被压缩折行：「当前文献」在小工具条里被挤成「当前文」/「献」两行，
    看上去像排版坏了。flex 子项默认 min-width:auto 会收缩，这里明确不缩。 */
 .paper-bar .pick{flex:none;white-space:nowrap}
@@ -803,6 +808,8 @@ svg{width:100%;height:auto;display:block}
         <label class="pick">当前文献 <select id="paper-pick" aria-label="切换文献"></select></label>
         <span class="sub" id="paper-meta"></span>
       </div>
+      <!-- 作者与机构单独一行：顶栏那行是 nowrap + 省略号，塞不下 -->
+      <div class="sub writers" id="paper-writers"></div>
       <div class="page" id="page-body">
         <span class="pgmark" id="page-mark">—</span>
         <h4 id="page-title">请先在文献库选择一篇论文</h4>
@@ -1564,6 +1571,7 @@ svg{width:100%;height:auto;display:block}
     $('page-text').replaceChildren(el('p', { class: 'note' }, '请从左侧目录选择一段开始阅读。'));
     $('outline-list').replaceChildren();
     $('paper-meta').textContent = '';
+    $('paper-writers').textContent = '';
     $('qa-chip').textContent = '未提问';
     $('ref-count').textContent = '—';
     $('ref-body').replaceChildren(el('p', { class: 'note', style: 'margin:0' }, '载入中…'));
@@ -1592,6 +1600,7 @@ svg{width:100%;height:auto;display:block}
       pick.disabled = true;
     }
     $('paper-meta').textContent = '';
+    $('paper-writers').textContent = '';
   }
 
   /** 文献库的排列：**同一篇的多版本必须挨着**。
@@ -1637,6 +1646,10 @@ svg{width:100%;height:auto;display:block}
       // 扫描件也要标出来 —— 扫描件和正常版是**同一版**的两份文件，
       // 只写文件名的话，两行都写着 v1，看不出差别在哪。
       const meta = [
+        // 作者与机构放在最前：同一篇的多版本标题一模一样，靠文件名分不出谁是谁；
+        // 但"这篇是谁写的"是辨认真身最自然的一眼（模块一要求"作者及机构信息"）。
+        authorLine(p) ? `作者 ${authorLine(p)}` : '',
+        affiliationLine(p) ? `机构 ${affiliationLine(p)}` : '',
         p.filename,
         p.arxiv_version ? `v${p.arxiv_version}` : '',
         p.scanned ? '扫描件' : '',
@@ -1790,6 +1803,38 @@ svg{width:100%;height:auto;display:block}
     if (p.created_at) return `PDF 生成于 ${p.created_at}`;
     if (p.arxiv_date) return `arXiv 投稿于 ${p.arxiv_date}`;
     return '生成日期未知';
+  }
+
+  /** 首页认出的作者。名单长时只列前三位，用「等 N 人」把人数交代清楚 ——
+      GPT-3 有 31 位作者，全列出来会把整行撑成三行，剩下的名字反而没人看。
+      认不出（扫描件、封面不列名的报告）就返回空串，界面不写「作者未知」：
+      那句话既不帮忙判断，还占地方。 */
+  function authorLine(p, limit = 3) {
+    const names = (p && p.authors) || [];
+    if (!names.length) return '';
+    return names.length > limit
+      ? `${names.slice(0, limit).join('、')} 等 ${names.length} 人`
+      : names.join('、');
+  }
+
+  /** 首页认出的机构。多家并列时用顿号，和上面的作者行读法一致。 */
+  function affiliationLine(p) {
+    const list = (p && p.affiliations) || [];
+    return list.join('、');
+  }
+
+  /** 阅读器里单独一行写作者与机构。**不塞进顶栏那行**：那一行是 nowrap + 省略号，
+      塞进去的结果是「Ashish Vaswani 等 8 人（Google Brain 等 3 家） · 15 页 · 28 块 · v1 · P…」，
+      日期被截掉一半，而作者与机构本身也只剩个开头。单独一行能换行，信息是完整的。
+      GPT-4 那种封面只印机构、不列人名的报告要写「机构 OpenAI」——
+      裸写一个 OpenAI，读者会以为那是作者名。 */
+  function writerBlock(p) {
+    const names = authorLine(p);
+    const orgs = affiliationLine(p);
+    return [
+      names ? `作者 ${names}` : '',
+      orgs ? `机构 ${orgs}` : '',
+    ].filter(Boolean).join(' · ');
   }
 
   /** 同上，只是塞进「v7 · 2024-04-10 · 扫描件」这种短行里。 */
@@ -2279,7 +2324,8 @@ svg{width:100%;height:auto;display:block}
     sel.replaceChildren(...state.papers.map(option));
     if (state.paper) sel.value = state.paper.id;
     else if (state.papers[0]) sel.value = state.papers[0].id;
-    $('paper-meta').textContent = state.paper
+    $('paper-writers').textContent = state.paper ? writerBlock(state.paper) : '';
+    const meta = state.paper
       ? [
           `${state.paper.pages} 页`,
           `${state.paper.chunks} 块`,
@@ -2288,6 +2334,9 @@ svg{width:100%;height:auto;display:block}
           (state.paper.created_at || state.paper.arxiv_date) ? paperDateLong(state.paper) : '',
         ].filter(Boolean).join(' · ')
       : '';
+    $('paper-meta').textContent = meta;
+    // 窗口窄到放不下时这一行是省略号；title 让鼠标悬停能读全
+    $('paper-meta').title = meta;
   }
 
   /** 文献库点一行：先切视图再载入 —— 只载入不切，看着像没反应。 */

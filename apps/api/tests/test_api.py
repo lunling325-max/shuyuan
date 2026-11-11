@@ -78,6 +78,23 @@ def test_upload_returns_parsed_metadata(client, paper_id):
     assert body["title"]
 
 
+def test_upload_records_authors_and_affiliations(client, paper_id):
+    """模块一要求"作者及机构信息"。这一条守的是**接口出口** ——
+    `Paper` 里有、sidecar 里有，但 `PaperOut` 漏了，界面照样一片空白。"""
+    body = client.get(f"/api/papers/{paper_id}").json()
+    assert body["authors"][0] == "Ashish Vaswani"
+    assert len(body["authors"]) == 8
+    assert body["affiliations"] == ["Google Brain", "Google Research", "University of Toronto"]
+
+
+def test_author_list_is_copied_not_handed_out(client, paper_id):
+    """每次响应都必须是新列表。交出去的要是注册表里那一份，调用方（前端、
+    Agent 工具）顺手 append 一下，下一批读者看到的就是被改过的作者名单。"""
+    first = client.get(f"/api/papers/{paper_id}").json()
+    first["authors"].append("Someone Else")
+    assert "Someone Else" not in client.get(f"/api/papers/{paper_id}").json()["authors"]
+
+
 def test_title_comes_from_the_body_not_the_metadata(client, paper_id):
     """回归测试：这份 PDF 的元数据标题是 "scholarly works."（版权声明），
     直接信它会让文献库里一半的论文同名且全错。"""
