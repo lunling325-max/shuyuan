@@ -557,6 +557,7 @@ def copilot_outline(req: CopilotOutlineRequest) -> CopilotOutlineOut:
 # 按功能拆出去的路由：各自带 APIRouter，这里统一挂载。
 # 放在静态挂载之前，否则 "/" 会先被 StaticFiles 吃掉。
 from app.api.routers import agent as agent_routes  # noqa: E402
+from app.api.routers import cross as cross_routes  # noqa: E402
 from app.api.routers import dataviz as dataviz_routes  # noqa: E402
 from app.api.routers import recommend as recommend_routes  # noqa: E402
 from app.api.routers import review as review_routes  # noqa: E402
@@ -573,6 +574,8 @@ app.include_router(dataviz_routes.router)
 app.include_router(stream_routes.router)
 app.include_router(translate_routes.router)
 app.include_router(visual_routes.router)
+# 跨文献对比：同一个问题分别去两到三篇里取证据，逐条锚回各自的原文
+app.include_router(cross_routes.router)
 
 
 # 静态前端放在最后挂载：/api 与 /docs 先匹配，剩下的才交给静态文件

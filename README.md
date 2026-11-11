@@ -70,6 +70,10 @@ uv run uvicorn app.api.main:app --reload --port 8017
 |---|---|
 | ![数据可视化](docs/screenshots/live/15-dataviz-server.png) | ![中译英](docs/screenshots/live/16-translate-live.png) |
 
+| 划词翻译：选中一句就地给中文 | 跨文献对比：每条锚点标注出自哪一篇 |
+|---|---|
+| ![划词翻译](docs/screenshots/live/18-seltr-live.png) | ![跨文献对比](docs/screenshots/live/19-cross-live.png) |
+
 更多（深色主题、窄屏、引用图谱、版本对比）在同目录 `docs/screenshots/live/`。
 
 ## 目录
@@ -143,6 +147,8 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 | POST | `/api/dataviz/chart` | CSV → 统计表 + SVG + TikZ/Mermaid/Matplotlib + 图注（数字逐个核验） |
 | POST | `/api/dataviz/preview` | 只解析不画图：列类型、统计量、前 100 行 |
 | POST | `/api/translate/zh-en` | 中文 → 英文逐段翻译；公式/代码/`[n]` 没保住的那段退回原文 |
+| POST | `/api/translate/en-zh` | 划词翻译：选中片段英译中（≤1200 字符），浮层就地显示 |
+| POST | `/api/papers/compare` | 跨文献对比：2–3 篇各召回一批证据、一次生成，每条锚点标注出自哪一篇 |
 
 问答的 `mode` 有两种：
 
@@ -229,13 +235,14 @@ uv run --directory apps/api python ../../scripts/eval_qa.py \
 1851 / 5157 ms，差的一条引用来自库里多了一篇 GLU 论文改变了某题的召回块数。
 库从 7 篇灌到 13 篇（260 页 / 531 块）后也复测过：三项指标一条没掉，中位耗时
 1851 → 2005 ms；十一个视图全部可用，最慢的是综述 13.5 s（E-026）。
+E-038 之后界面是十二个视图（新增「跨文献对比」）。
 
 ## 文档索引
 
 | 文件 | 内容 |
 |---|---|
-| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 11 张实机截图（PDF 20 页，`build/TECH.pdf`） |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 37 篇实验记录（E-001–E-037），每条结论带实测数字 |
+| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 11 张实机截图（PDF 21 页，`build/TECH.pdf`） |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 38 篇实验记录（E-001–E-038），每条结论带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑与对策） |
 | [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：时间轴、逐段口播、翻车预案；录屏成品 `build/shuyuan-demo.mp4`（6 分 26 秒） |

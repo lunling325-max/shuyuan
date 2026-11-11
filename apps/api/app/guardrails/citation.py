@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from app.parsing.text_index import Anchor, TextIndex
 
@@ -72,7 +72,13 @@ def verify_claims(
                 continue
             anchor = index.find(quote.text, min_similarity=min_similarity)
             if anchor is not None:
-                anchors.append(anchor)
+                # 记下这句话出自哪个文档。单篇问答里它恒等于本篇 id，
+                # 跨文献对比里才是关键信息：同一条结论的两条引用可能来自不同论文，
+                # 界面上必须能分开显示（E-038）。
+                # Anchor 是 frozen 的，只能换一个新对象 —— 直接赋值会抛
+                # FrozenInstanceError，而调用方通常把异常收进"降级"分支，
+                # 结果是所有引用都被判成校验失败（实测 E-038 红过一轮）。
+                anchors.append(replace(anchor, doc=quote.doc))
 
         if not anchors:
             reason = "所有引用均未在原文中命中"

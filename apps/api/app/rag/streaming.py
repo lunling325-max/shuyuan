@@ -54,6 +54,8 @@ def _anchor_payload(anchor) -> dict[str, Any]:
         "exact": anchor.exact,
         "similarity": anchor.similarity,
         "truncated": getattr(anchor, "truncated", False),
+        # 单篇问答里恒等于本篇 id；跨文献对比里前端靠它把锚点分到 A/B 两栏
+        "doc": getattr(anchor, "doc", ""),
     }
 
 

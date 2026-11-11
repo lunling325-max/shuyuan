@@ -89,6 +89,10 @@ class Anchor:
     similarity: float
     token_span: tuple[int, int]  # 在词流中的起止下标，便于调试
     truncated: bool = False  # 引用尾部被截断（模型常见），已按最长可验证前缀命中
+    # 这条引用来自哪个文档（paper_id）。`TextIndex.find` 不知道文档名，
+    # 由校验器回填（`guardrails.citation.verify_claims`）—— 跨文献对比要靠它
+    # 把每条锚点归到 A 还是 B 名下。
+    doc: str = ""
 
 
 class TextIndex:

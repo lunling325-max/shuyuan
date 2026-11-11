@@ -17,6 +17,8 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.rag.translate_en import MAX_INPUT_CHARS as MAX_EN_INPUT_CHARS
+from app.rag.translate_en import translate_snippet
 from app.rag.translate_zh import MAX_INPUT_CHARS, translate_text
 
 router = APIRouter()
@@ -59,6 +61,45 @@ def translate_zh_en(req: TranslateRequest) -> TranslateZhEnOut:
         paragraphs=[
             TranslateParagraphOut(zh=p.zh, en=p.en) for p in result.paragraphs
         ],
+        model=result.model,
+        degraded=result.degraded,
+        notes=result.notes,
+    )
+
+
+class TranslateEnRequest(BaseModel):
+    text: str = Field(description="阅读器里选中的那段英文（短语、句子或一段）")
+
+
+class TranslateEnOut(BaseModel):
+    en: str = Field(description="原文片段，始终返回")
+    zh: str = Field(description="中文译文；降级时为空串")
+    model: str
+    degraded: bool = Field(
+        description="True=模型不可用，或译文丢了公式/引用编号"
+    )
+    notes: list[str] = Field(default_factory=list, description="降级的具体原因")
+
+
+@router.post("/api/translate/en-zh", response_model=TranslateEnOut)
+def translate_en_zh(req: TranslateEnRequest) -> TranslateEnOut:
+    """阅读器划词翻译：一小段英文 → 中文。
+
+    上限比中译英小得多（1200 字符）：划词是"看这一句"，
+    整段整篇的翻译走中英对照那条路，那条路有段落对齐与缓存。
+    """
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(400, "待翻译文本为空")
+    if len(text) > MAX_EN_INPUT_CHARS:
+        raise HTTPException(
+            413, f"选中文本超过 {MAX_EN_INPUT_CHARS} 字符，请分段后再试"
+        )
+
+    result = translate_snippet(text)
+    return TranslateEnOut(
+        en=result.en,
+        zh=result.zh,
         model=result.model,
         degraded=result.degraded,
         notes=result.notes,

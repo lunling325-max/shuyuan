@@ -285,6 +285,35 @@ tbody tr:hover{background:var(--ring)}
 .pagenav a{color:var(--s1);text-decoration:none;border-radius:4px;padding:2px 4px}
 .pagenav a:hover{background:var(--ring)}
 .pagenav .note{color:var(--ink-3);font-size:var(--fs-xs)}
+/* 划词翻译：按钮贴着选区下沿，浮层跟着按钮走。两层都是 position:fixed ——
+   正文容器是两栏且会滚动，absolute 会跟着它一起滚走。 */
+.seltr-btn{
+  position:fixed;z-index:60;width:34px;height:26px;padding:0;
+  border:1px solid var(--ring);border-radius:6px;background:var(--surface-2);
+  color:var(--s1);font:inherit;font-size:var(--fs-xs);font-weight:600;
+  box-shadow:var(--shadow);cursor:pointer;
+}
+.seltr-btn:hover{background:var(--wash)}
+.seltr-btn:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
+.seltr-pop{
+  position:fixed;z-index:61;width:340px;max-width:calc(100vw - 16px);
+  max-height:min(52vh,420px);overflow:auto;
+  padding:var(--sp-3);border:1px solid var(--hair);border-radius:10px;
+  background:var(--surface-2);box-shadow:var(--shadow);font-size:var(--fs-sm);
+}
+.seltr-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.seltr-head span{color:var(--ink-3);font-size:var(--fs-xs);letter-spacing:.04em}
+.seltr-x{
+  border:0;background:none;color:var(--ink-3);font:inherit;font-size:16px;
+  line-height:1;padding:0 2px;cursor:pointer;border-radius:4px;
+}
+.seltr-x:hover{background:var(--ring);color:var(--ink-1)}
+.seltr-src{
+  margin:0 0 var(--sp-2);padding-left:8px;border-left:2px solid var(--hair);
+  color:var(--ink-3);font-size:var(--fs-xs);line-height:1.5;
+}
+.seltr-zh{margin:0;color:var(--ink-1);line-height:1.6}
+.seltr-pop .note{font-size:var(--fs-xs);color:var(--ink-3);margin:6px 0 0}
 mark{
   background:var(--wash);color:inherit;padding:1px 2px;border-radius:3px;
   outline:1px solid rgba(42,120,214,.35);
@@ -704,6 +733,7 @@ svg{width:100%;height:auto;display:block}
     <button data-v="reader" role="tab" aria-controls="view-reader" aria-selected="false">阅读器</button>
     <button data-v="version" role="tab" aria-controls="view-version" aria-selected="false">版本谱系</button>
     <button data-v="compare" role="tab" aria-controls="view-compare" aria-selected="false">中英对照</button>
+    <button data-v="cross" role="tab" aria-controls="view-cross" aria-selected="false">跨文献对比</button>
     <button data-v="graph" role="tab" aria-controls="view-graph" aria-selected="false">引用图谱</button>
     <button data-v="retrieve" role="tab" aria-controls="view-retrieve" aria-selected="false">文献检索</button>
     <button data-v="recommend" role="tab" aria-controls="view-recommend" aria-selected="false">每日推荐</button>
@@ -859,6 +889,46 @@ svg{width:100%;height:auto;display:block}
       <div class="card pane">
         <h5>中文 · 译文 <span class="chip" id="cmp-model" hidden></span></h5>
         <div id="cmp-zh"><p class="note">点击「翻译这一段」。公式、代码与变量名保留英文。</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 跨文献对比 ==================== -->
+<section class="view fill" id="view-cross" role="tabpanel" aria-label="跨文献对比">
+  <div class="review">
+    <div class="card col">
+      <h1 style="font-size:var(--fs-lg)">跨文献对比</h1>
+      <p class="sub">同一个问题分别去两到三篇里各召回证据，一次生成；每条引用按各自的原文校验，并标注出自哪一篇</p>
+      <div class="bar" style="margin-bottom:var(--sp-2)">
+        <label class="pick">论文 A <select id="cx-a" aria-label="选择论文 A"></select></label>
+        <label class="pick">论文 B <select id="cx-b" aria-label="选择论文 B"></select></label>
+        <label class="pick">论文 C <select id="cx-c" aria-label="选择论文 C（可不选）"></select></label>
+      </div>
+      <div class="bar" style="margin-bottom:var(--sp-3)">
+        <div class="composer" style="flex:1">
+          <input id="cx-q" aria-label="对比问题" placeholder="比如：这两篇的架构差异在哪？">
+        </div>
+        <label class="pick">每篇证据 <select id="cx-k" aria-label="每篇召回几块证据">
+          <option>1</option><option>2</option><option selected>3</option><option>4</option>
+        </select></label>
+        <button class="btn primary" id="cx-run">开始对比</button>
+      </div>
+      <span class="sub" id="cx-state" role="status" aria-live="polite" style="margin:0"></span>
+      <div id="cx-out" style="margin-top:14px">
+        <p class="note" style="margin:0 0 8px;max-width:84ch">
+          对比结论逐条列出，每条下方是该条引用落到的原文位置，前缀 A / B / C 指明出自哪一篇，点击可跳转至阅读器的对应页。
+        </p>
+        <p class="note" style="margin:0;max-width:84ch">
+          只在某一篇里出现的结论就只引用那一篇 —— 为凑对称而硬加的引用会因原文对不上而被拦截。
+        </p>
+      </div>
+    </div>
+    <div class="card col">
+      <h1 style="font-size:var(--fs-lg)">各篇召回的原文</h1>
+      <p class="sub">按论文分组编号，与模型看到的证据块一致；检索式只扩展一次，各篇共用</p>
+      <div id="cx-evid">
+        <p class="note" style="margin:0">尚未对比。在左侧选定两篇文献并输入问题后运行。</p>
       </div>
     </div>
   </div>
@@ -1145,8 +1215,8 @@ svg{width:100%;height:auto;display:block}
   /* ---------------------------------------------------------------- 视图路由
      hash 路由：刷新、直接粘贴链接、后退都能回到同一个视图。
      这也让自动截图可以逐屏定位（#reader / #graph …）。 */
-  const VIEWS = ['library', 'reader', 'version', 'compare', 'graph', 'retrieve', 'recommend',
-    'review', 'agent', 'copilot'];
+  const VIEWS = ['library', 'reader', 'version', 'compare', 'cross', 'graph', 'retrieve',
+    'recommend', 'review', 'agent', 'copilot'];
   const nav = document.getElementById('nav');
   const viewEls = [...document.querySelectorAll('.view')];
   const main = document.querySelector('main');
@@ -2025,6 +2095,9 @@ svg{width:100%;height:auto;display:block}
       const hash = location.hash.slice(1);
       if (hash === 'version') maybeAutoCompare();
       if (hash === 'compare') ensureCompare();
+      // 深链进 #cross 时 enterView() 比这里先跑，那会儿 state.papers 还是空的，
+      // 三个下拉全空、状态行停在"文献库为空"。库到位后重填一次（可重复调用）。
+      if (hash === 'cross') enterCross();
     } catch (err) {
       $('lib-summary').textContent = '连不上后端';
       showNote(`无法读取文献库：${err.message}`, 'error');
@@ -2310,9 +2383,32 @@ svg{width:100%;height:auto;display:block}
       .filter((piece) => piece !== '');
   }
 
+  /** 引用在正文里的落点。整句找不到时退到"最长可命中的前缀"。
+
+      引用文本来自词级索引，正文来自切块器，两边对空白的处理不完全一致：
+      索引里孤立成词的标点（`heads - dozens` 的那个连字符）不产生 token，
+      回显时就被跳过了，于是整句 indexOf 落空、跳过来一点高亮都没有 ——
+      看上去像"这条引用没有被校验过"。退到前缀当然不完美，但比什么都没有诚实。 */
+  function highlightSpan(flat, highlight) {
+    if (!highlight) return [-1, -1];
+    const hay = flat.toLowerCase();
+    const needle = highlight.toLowerCase();
+    const at = hay.indexOf(needle);
+    if (at >= 0) return [at, at + needle.length];
+    let lo = 0;
+    let hi = needle.length;          // 二分找最长前缀：前缀能找到，更短的必然能找到
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (hay.includes(needle.slice(0, mid))) lo = mid;
+      else hi = mid - 1;
+    }
+    if (lo < 12) return [-1, -1];    // 太短就没有定位价值，标错位置比不标更糟
+    const start = hay.indexOf(needle.slice(0, lo));
+    return [start, start + lo];
+  }
+
   function bodyNodes(flat, highlight) {
-    const at = highlight ? flat.toLowerCase().indexOf(highlight.toLowerCase()) : -1;
-    const hi = at < 0 ? -1 : at + highlight.length;
+    const [at, hi] = highlightSpan(flat, highlight);
     const nodes = [];
     let last = 0;
     for (const hit of anchorHits(flat)) {
@@ -2681,6 +2777,7 @@ svg{width:100%;height:auto;display:block}
   }
 
   function renderChunk(chunk, highlight = '') {
+    hideSelTr();   // 换了正文，选区和浮层都过期了
     state.chunk = chunk;
     const pageLabel = chunk.page_start === chunk.page_end
       ? `p.${chunk.page_start}`
@@ -3144,6 +3241,132 @@ svg{width:100%;height:auto;display:block}
       if (QSTREAM.abort === ctrl) QSTREAM.abort = null;
       btn.disabled = false;
     }
+  }
+
+  // ---------------------------------------------------------------- 划词翻译
+  /* 选中正文里的一句，就地给中文。赛题模块三要的是"局部划词/悬停翻译"，
+     整段的对照翻译走「中英对照」那条路（那边有段落对齐与缓存），
+     这里是"读到一句卡住了，想立刻知道它说什么"。
+
+     两个坑，写在这里免得以后又踩：
+     1. 点按钮会把选区收起来 —— 所以文字和位置必须在 mouseup 那一刻就存好，
+        等 click 回来再读 getSelection() 只能拿到空串；
+     2. 正文容器是两栏 + 内部滚动，浮层用 position:fixed 才不会跟着滚走。 */
+  const SELTR = { btn: null, pop: null, text: '', x: 0, y: 0, cache: new Map() };
+
+  function hideSelTr() {
+    if (SELTR.btn) SELTR.btn.hidden = true;
+    if (SELTR.pop) SELTR.pop.hidden = true;
+  }
+
+  function selTrButton() {
+    if (SELTR.btn) return SELTR.btn;
+    SELTR.btn = el('button', {
+      class: 'seltr-btn', type: 'button', title: '翻译选中的英文',
+      'aria-label': '翻译选中的英文',
+      on: { click: () => translateSelection() },
+    }, '译');
+    SELTR.btn.hidden = true;
+    document.body.append(SELTR.btn);
+    return SELTR.btn;
+  }
+
+  function selTrPop() {
+    if (SELTR.pop) return SELTR.pop;
+    SELTR.pop = el('div', { class: 'seltr-pop', role: 'dialog', 'aria-label': '划词翻译' });
+    SELTR.pop.hidden = true;
+    document.body.append(SELTR.pop);
+    return SELTR.pop;
+  }
+
+  async function translateSelection() {
+    const text = SELTR.text;
+    if (!text) return;
+    if (SELTR.btn) SELTR.btn.hidden = true;
+
+    const pop = selTrPop();
+    // 夹在视口内：选区在页面右下角时，浮层不能被推出屏幕
+    const width = Math.min(340, window.innerWidth - 16);
+    const left = Math.min(Math.max(8, SELTR.x - width / 2), window.innerWidth - width - 8);
+    const top = Math.min(Math.max(8, SELTR.y + 8), window.innerHeight - 120);
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+    pop.hidden = false;
+
+    const head = el('div', { class: 'seltr-head' },
+      el('span', {}, SELTR.cache.has(text) ? '译文' : `译文 · ${text.length} 字符`),
+      el('button', {
+        class: 'seltr-x', type: 'button', 'aria-label': '关闭',
+        on: { click: () => { pop.hidden = true; } },
+      }, '×'));
+    const src = el('p', { class: 'seltr-src' }, text);
+    const out = el('p', { class: 'seltr-zh' }, '翻译中…');
+    pop.replaceChildren(head, src, out);
+
+    const cached = SELTR.cache.get(text);
+    if (cached) {
+      pop.replaceChildren(head, src, el('p', { class: 'seltr-zh' }, cached));
+      return;
+    }
+
+    try {
+      const data = await api('/translate/en-zh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (data.zh) SELTR.cache.set(text, data.zh);
+      pop.replaceChildren(
+        head,
+        src,
+        el('p', { class: 'seltr-zh' }, data.zh || '这次没翻成 —— 原文在上面，可对照阅读。'),
+        ...(data.notes || []).map((n) => el('p', { class: 'note' }, n)),
+      );
+    } catch (err) {
+      pop.replaceChildren(head, src,
+        el('p', { class: 'seltr-zh', style: 'color:var(--warn)' }, `翻译失败：${err.message}`));
+    }
+  }
+
+  function setupSelectionTranslate() {
+    const body = $('page-text');
+    if (!body) return;
+
+    body.addEventListener('mouseup', () => {
+      // 等浏览器把选区定下来再读（mouseup 时 selection 有时还没更新）
+      setTimeout(() => {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) { hideSelTr(); return; }
+        const range = sel.getRangeAt(0);
+        if (!body.contains(range.commonAncestorContainer)) { hideSelTr(); return; }
+        const text = sel.toString().replace(/\s+/g, ' ').trim();
+        // 少于 2 个字符没得译；超过 1200 字符该走中英对照；
+        // 纯数字/标点（表格里常选中）也没有翻译的意义
+        if (text.length < 2 || text.length > 1200 || !/[A-Za-z]{2}/.test(text)) {
+          hideSelTr();
+          return;
+        }
+        SELTR.text = text;
+        const rect = range.getBoundingClientRect();
+        SELTR.x = rect.left + rect.width / 2;
+        SELTR.y = rect.bottom;
+
+        if (SELTR.pop) SELTR.pop.hidden = true;   // 换了一处选区，旧译文过期
+        const btn = selTrButton();
+        btn.hidden = false;
+        btn.style.left = `${Math.min(Math.max(8, SELTR.x - 17), window.innerWidth - 42)}px`;
+        btn.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - 34)}px`;
+      }, 0);
+    });
+
+    // 点别处、按 Esc、正文滚动：都该收起来
+    document.addEventListener('mousedown', (e) => {
+      if (SELTR.btn && !SELTR.btn.hidden && e.target === SELTR.btn) return;
+      if (SELTR.pop && !SELTR.pop.hidden && SELTR.pop.contains(e.target)) return;
+      hideSelTr();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideSelTr(); });
+    body.addEventListener('scroll', hideSelTr, true);
   }
 
   // ---------------------------------------------------------------- 中英对照
@@ -4867,10 +5090,241 @@ svg{width:100%;height:auto;display:block}
 
   /* 进视图的统一入口：导航点击、hashchange、方向键切 tab 最后都落到 activate()，
      由 activate() 调这里。以前每个加载器自己挂 hashchange，只有点导航栏时什么都不发生。 */
+  // ---------------------------------------------------------------- 跨文献对比
+  /* 赛题模块二要的是"多篇论文跨文献对比"（BERT vs Transformer、GPT-1/2/3 的演进）。
+     单篇问答那条链路一次只认一篇，所以服务端另开 `/api/papers/compare`：
+     同一个问题分别在各篇里召回证据，一次生成，再按各自的原文逐条校验。
+
+     前端只做三件事：选文献、发请求、把"哪句话出自哪一篇"摆明白。
+     难点全在跳转：点 B 的锚点时阅读器往往还停在 A 上，必须先把 B 载进来，
+     否则会按页码在**错的论文**里找块 —— 页对、文不对，比不跳更误导人。 */
+  const CROSS = { busy: false, papers: {} };
+
+  /** 填 A / B / C 三个下拉。A、B 必选，C 可选"不参与"。 */
+  function renderCrossPickers() {
+    const papers = state.papers || [];
+    const fill = (sel, allowEmpty) => {
+      if (!sel) return null;
+      const keep = sel.value;
+      const list = papers.map((p) => el('option', { value: p.id }, paperLabel(p)));
+      if (allowEmpty) list.unshift(el('option', { value: '' }, '（不参与本次对比）'));
+      if (!list.length) list.push(el('option', { value: '' }, '文献库为空'));
+      sel.replaceChildren(...list);
+      // 重建选项时浏览器会把 value 归到第一项，所以"原来选的那篇"要显式放回去
+      if (keep && papers.some((p) => p.id === keep)) sel.value = keep;
+      sel.disabled = !papers.length;
+      return sel;
+    };
+    const a = fill($('cx-a'), false);
+    const b = fill($('cx-b'), false);
+    fill($('cx-c'), true);
+    if (!papers.length || !a || !b) return;
+    // 默认取前两篇：进来就能点「开始对比」，不必先答三道选择题。
+    // A、B 会同时落在第一篇上（上面那句 value 归位），必须显式错开，
+    // 否则按钮一按就是服务端的 400「同一篇文献传了两次」。
+    if (!a.value) a.value = papers[0].id;
+    if (!b.value || b.value === a.value) {
+      const other = papers.find((p) => p.id !== a.value);
+      b.value = other ? other.id : a.value;
+    }
+  }
+
+  /** 跨文献跳转：目标可能在另一篇里，先换文献再定位。 */
+  async function gotoAnchorInPaper(paperId, page, quote) {
+    goTo('reader');
+    try {
+      if (paperId && (!state.paper || state.paper.id !== paperId)) await openPaper(paperId);
+      gotoAnchor(page, quote);
+    } catch (err) {
+      $('qa-chip').textContent = '跳转失败';
+      console.warn('跨文献跳转失败', err);
+    }
+  }
+
+  /** 证据行：点一下在阅读器里打开对应段落。 */
+  async function gotoChunkInPaper(paperId, chunkIndex) {
+    goTo('reader');
+    try {
+      if (paperId && (!state.paper || state.paper.id !== paperId)) await openPaper(paperId);
+      const chunk = state.chunks.find((c) => c.index === chunkIndex);
+      if (chunk) { renderChunk(chunk); syncOutline(chunk); }
+    } catch (err) {
+      $('qa-chip').textContent = '跳转失败';
+      console.warn('跨文献跳转失败', err);
+    }
+  }
+
+  function crossAnchor(anchor) {
+    const paper = CROSS.papers[anchor.paper] || {};
+    // 标题不写在行里：一条结论常引两篇，逐条重复标题只是噪声，
+    // A/B 与右栏的分组一一对应就够辨认。完整标题挂在 chip 的 title 上，悬停可见。
+    return el('div', { class: 'cite' },
+      el('div', { class: 'top' },
+        el('span', { class: 'chip', title: paper.title || '' }, `论文 ${anchor.paper || '?'}`),
+        el('span', { class: 'pg' }, `p.${anchor.page}`),
+        anchor.exact ? null : el('span', { class: 'chip' }, '模糊命中'),
+      ),
+      el('div', { class: 'quote' }, `"${anchor.source_text}"`),
+      el('button', {
+        class: 'go',
+        on: { click: () => gotoAnchorInPaper(paper.id, anchor.page, anchor.source_text) },
+      }, '跳转到原文 →'),
+    );
+  }
+
+  function renderCrossEvidence(data) {
+    const box = $('cx-evid');
+    box.replaceChildren();
+    data.papers.forEach((p) => {
+      const hits = (data.evidence || {})[p.label] || [];
+      const group = el('div', { style: 'margin:0 0 var(--sp-4)' },
+        el('h1', { style: 'font-size:var(--fs-md);margin:0 0 6px' }, `论文 ${p.label} · ${p.title}`));
+      if (!hits.length) {
+        group.append(el('p', { class: 'note', style: 'margin:0' }, '这一篇没有召回任何内容，结论里不应出现它的引用。'));
+      }
+      hits.forEach((h, i) => group.append(el('div', { style: 'margin:0 0 10px' },
+        el('div', { class: 'evrow' },
+          el('a', {
+            href: '#',
+            on: {
+              click: (ev) => {
+                ev.preventDefault();
+                gotoChunkInPaper(p.id, h.chunk_index);
+              },
+            },
+          }, `[${p.label}#${i + 1}] p.${h.page} ${h.section} `),
+          el('span', { class: 'mono' }, Number(h.score || 0).toFixed(4))),
+        el('p', { class: 'note', style: 'margin:2px 0 0' }, h.preview))));
+      box.append(group);
+    });
+    if (!box.childNodes.length) {
+      box.append(el('p', { class: 'note', style: 'margin:0' }, '本次没有召回任何原文。'));
+    }
+  }
+
+  function renderCross(data, question) {
+    const out = $('cx-out');
+    const groups = data.papers.map((p) => {
+      const hits = (data.evidence || {})[p.label] || [];
+      return `${p.label} 召回 ${hits.length} 块`;
+    });
+    const totalHits = Object.values(data.evidence || {}).reduce((n, v) => n + v.length, 0);
+
+    out.replaceChildren(
+      el('div', { class: 'q' }, question),
+      el('div', { class: 'think' },
+        `${data.papers.length} 篇 · ${groups.join(' / ')} · ${data.took_ms}ms`
+        + (data.claims.length ? ` · ${verifyLine(data.stats, totalHits)}` : '')),
+    );
+    (data.notes || []).forEach((n) => out.append(
+      el('p', { class: 'note', style: 'margin:0 0 8px;color:var(--warn)' }, n)));
+    if (!data.claims.length) {
+      out.append(el('p', { class: 'note', style: 'margin:0' },
+        '本次没有给出对比结论。右侧仍列出各篇召回的原文，可自行比对。'));
+    }
+    data.claims.forEach((c) => {
+      const block = el('div', { class: 'a' });
+      if (c.status === 'unsupported') {
+        block.append(
+          el('p', { style: 'margin:0 0 6px;color:var(--ink-3);text-decoration:line-through' }, c.text),
+          el('div', { class: 'note', style: 'margin:0' }, `已拦截：${c.reason}`),
+        );
+      } else {
+        block.append(el('p', { style: 'margin:0 0 var(--sp-2)' }, c.text));
+        if (c.status === 'weak') {
+          block.append(el('div', { class: 'note', style: 'margin:0 0 6px' }, '模糊命中，原文需人工确认'));
+        }
+        (c.anchors || []).forEach((a) => block.append(crossAnchor(a)));
+      }
+      out.append(block);
+    });
+    out.scrollTop = 0;
+  }
+
+  async function runCross() {
+    if (CROSS.busy) return;
+    const question = $('cx-q').value.trim();
+    const ids = [$('cx-a').value, $('cx-b').value, $('cx-c').value].filter(Boolean);
+    if (!question) { $('cx-state').textContent = '请先输入对比问题'; $('cx-q').focus(); return; }
+    if (ids.length < 2) { $('cx-state').textContent = '至少选择两篇文献'; return; }
+    if (new Set(ids).size !== ids.length) { $('cx-state').textContent = '有两项选了同一篇文献，请换一篇'; return; }
+
+    const out = $('cx-out');
+    const box = $('cx-evid');
+    const btn = $('cx-run');
+    CROSS.busy = true;
+    btn.disabled = true;
+    out.replaceChildren(el('p', { class: 'note', style: 'margin:0' }, '正在各篇检索并生成对比…'));
+    box.replaceChildren(el('p', { class: 'note', style: 'margin:0' }, `正在各篇召回证据：${ids.length} 篇`));
+    // 三篇各召回一批 + 一次生成，比单篇问答更久；超过 20 秒把秒数挂上去
+    const stop = busyTicker($('cx-state'), '各篇检索 → 一次生成 → 逐条校验…');
+
+    try {
+      const data = await api('/papers/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paper_ids: ids,
+          question,
+          k: Number($('cx-k').value) || 3,
+        }),
+      });
+      CROSS.papers = Object.fromEntries((data.papers || []).map((p) => [p.label, p]));
+      renderCross(data, question);
+      renderCrossEvidence(data);
+      $('cx-state').textContent = data.degraded
+        ? '已降级（结论未生成）'
+        : `已溯源 · ${data.took_ms}ms`;
+    } catch (err) {
+      $('cx-state').textContent = '失败';
+      out.replaceChildren(
+        el('div', { class: 'q' }, question),
+        el('p', { class: 'note', style: 'margin:0;color:var(--warn)' }, `对比失败：${err.message}`),
+      );
+      box.replaceChildren(el('p', { class: 'note', style: 'margin:0' }, '本次没有拿到证据。'));
+    } finally {
+      stop();
+      CROSS.busy = false;
+      btn.disabled = false;
+    }
+  }
+
+  function enterCross() {
+    renderCrossPickers();
+    const n = (state.papers || []).length;
+    if (n < 2) {
+      $('cx-state').textContent = n ? '库内只有一篇，无法对比' : '文献库为空';
+      $('cx-out').replaceChildren(el('p', { class: 'note', style: 'margin:0;max-width:84ch' },
+        n
+          ? '跨文献对比至少要两篇论文。请先在「文献库」再上传一篇，或用「文献检索」入一篇同领域的论文。'
+          : '跨文献对比需要库内至少两篇论文。请先在「文献库」上传，或用「文献检索」从 arXiv 等处入库。'));
+      $('cx-evid').replaceChildren(el('p', { class: 'note', style: 'margin:0' }, '文献库为空，暂无召回的原文。'));
+      CROSS.blank = true;
+      return;
+    }
+    // 上一轮写的是"库内不够"，现在够了：把初始说明挂回去。
+    // 用当初那批节点重新挂载，而不是再写一份文案 —— 两处文案迟早会不一致。
+    if (CROSS.blank) {
+      CROSS.blank = false;
+      $('cx-state').textContent = '';
+      $('cx-out').replaceChildren(...CROSS_DEFAULT.out);
+      $('cx-evid').replaceChildren(...CROSS_DEFAULT.evid);
+    }
+  }
+
+  // 初始说明只写在 HTML 里一份；空库提示把它顶掉之后，靠这批节点原样挂回来
+  const CROSS_DEFAULT = { out: [...$('cx-out').childNodes], evid: [...$('cx-evid').childNodes] };
+
+  $('cx-run').addEventListener('click', runCross);
+  $('cx-q').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); runCross(); }
+  });
+
   const VIEW_ENTER = {
     graph: () => loadGraph(),           // 已建过图就直接复用，不重复请求
     version: () => maybeAutoCompare(),
     compare: () => ensureCompare(),
+    cross: () => enterCross(),
     agent: () => loadAgentTools(),      // AG.tools 有缓存，进来一次就够
     // 检索 / 综述是"进来就要打字"的视图：把光标放进输入框，点了立刻有反应
     retrieve: () => $('arx-q')?.focus(),
@@ -4886,6 +5340,7 @@ svg{width:100%;height:auto;display:block}
   }
   window.__enterView = enterView;
 
+  setupSelectionTranslate();
   loadPapers();
   /* 首屏就落在某个视图时补一次：上面那个脚本块 activate() 得比这里早，
      那时 __enterView 还不存在，进视图该做的事就漏掉了 —— 直接打开
