@@ -74,6 +74,10 @@ uv run uvicorn app.api.main:app --reload --port 8017
 |---|---|
 | ![划词翻译](docs/screenshots/live/18-seltr-live.png) | ![跨文献对比](docs/screenshots/live/19-cross-live.png) |
 
+| 多来源检索：一条结果一个出处 | 引用含金量：被引数带出处，没有数的说清为什么不显示 |
+|---|---|
+| ![多来源检索](docs/screenshots/live/11-retrieve-results.png) | ![引用含金量](docs/screenshots/live/21-citations-live.png) |
+
 更多（深色主题、窄屏、引用图谱、版本对比）在同目录 `docs/screenshots/live/`。
 
 ## 目录
@@ -140,7 +144,7 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 | POST | `/api/review` | 综述 + Future Work：多查询扩展召回，参考文献表与目录页永不进证据 |
 | GET | `/api/recommend` | arXiv 最新提交 × 本地库相关性 × 开源代码的推荐，带逐条推荐理由；`?fresh=true` 绕过 15 分钟缓存 |
 | POST | `/api/recommend/vote` | 点赞/踩（再投同一票=取消），按用户分开落盘 |
-| GET | `/api/tools/search` | 多来源检索：arXiv / OpenAlex / Crossref / Semantic Scholar / Zenodo 并发查、跨站去重，每站各自 `degraded`，`?sources=` 选站 |
+| GET | `/api/tools/search` | 多来源检索：arXiv / OpenAlex / Crossref / Semantic Scholar / Zenodo 并发查、跨站去重，每站各自 `degraded`，`?sources=` 选站；每条带 `citations` 与 `citations_source`（0 = 这个站没给数，不是没人引） |
 | GET | `/api/tools/arxiv/search` | 只查 arXiv（断网时 `degraded=true`，不报 500） |
 | POST | `/api/tools/arxiv/ingest` | 检索结果直接入库：下载 → 解析 → 去重 |
 | GET | `/api/agent/tools` | 10 个工具的名称、参数与返回契约 |
@@ -166,13 +170,13 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 ## 测试
 
 ```bash
-cd apps/api && uv run pytest -q     # 493 项
+cd apps/api && uv run pytest -q     # 505 项
 ```
 
 其中一部分用例要读真实的演示论文（`pdf/` 不进仓库，见 `.gitignore`，7 份约 43 MB；
 用例按文件名找，需要哪几个写在各测试模块顶部的路径常量里）。
 没有这些文件时它们会 **skip 并写明缺哪个文件**，不会整片变红：从零 clone 下来实测
-`183 passed, 310 skipped`；把 PDF 放进仓库根的 `pdf/` 之后是 `493 passed`。
+`195 passed, 310 skipped`；把 PDF 放进仓库根的 `pdf/` 之后是 `505 passed`。
 
 覆盖：切块的边界条件、BM25 排序与单复数归并、RRF 去重、守卫的三级匹配、
 Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资料库恢复、
@@ -243,8 +247,8 @@ E-038 之后界面是十二个视图（新增「跨文献对比」）。
 
 | 文件 | 内容 |
 |---|---|
-| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 12 张实机截图与创新点说明（PDF 24 页，`build/TECH.pdf`） |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 39 篇实验记录（E-001–E-039），每条结论带实测数字 |
+| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 13 张实机截图与创新点说明（PDF 25 页，`build/TECH.pdf`） |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 40 篇实验记录（E-001–E-040），每条结论带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑与对策） |
 | [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：时间轴、逐段口播、翻车预案；录屏成品 `build/shuyuan-demo.mp4`（6 分 26 秒） |

@@ -68,6 +68,10 @@ class SearchHitOut(BaseModel):
     abs_url: str = ""
     arxiv_id: str = ""          # 非空 = 这篇能走 arXiv 通道入库
     can_ingest: bool = False
+    # 「引用含金量」筛选要用。0 的含义是**没有来源给出这个数**（arXiv 接口就不给），
+    # 不是"没人引"；`citations_source` 非空才说明这个数字出自哪个站。
+    citations: int = 0
+    citations_source: str = ""
 
 
 class SourceReportOut(BaseModel):

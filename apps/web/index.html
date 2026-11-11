@@ -1009,6 +1009,24 @@ svg{width:100%;height:auto;display:block}
         <button class="src" type="button" data-src="semanticscholar" aria-pressed="true">Semantic Scholar</button>
         <button class="src" type="button" data-src="zenodo" aria-pressed="true">Zenodo</button>
       </div>
+      <!-- 「引用含金量」筛选：按被引次数给检索结果分级。
+           门槛分四档而不是一个自由输入框 —— 演示时要在三秒内点完，
+           而 10 / 100 / 1000 大致对应"有人跟过""领域内常用""教科书级"。
+           这是**在当前结果里筛**，不是再查一遍（后端不做二次检索），
+           所以状态行必须写清楚"从 N 条里筛出 M 条"。 -->
+      <div class="srcbar" role="group" aria-label="引用含金量筛选">
+        <span class="lbl">引用含金量</span>
+        <button class="src" type="button" data-min="0" aria-pressed="true">不限</button>
+        <button class="src" type="button" data-min="10" aria-pressed="false">被引 ≥ 10</button>
+        <button class="src" type="button" data-min="100" aria-pressed="false">被引 ≥ 100</button>
+        <button class="src" type="button" data-min="1000" aria-pressed="false">被引 ≥ 1000</button>
+        <label class="pick" style="margin-left:auto">排序
+          <select id="arx-sort" aria-label="结果排序">
+            <option value="relevance">相关度</option>
+            <option value="citations">被引次数</option>
+          </select>
+        </label>
+      </div>
       <span class="sub" id="arx-state" style="margin:0"></span>
       <!-- 首次进入时给一段说明，而不是留一片空白：这个页面是"要先输入才动"的，
            空着会被当成没加载出来。检索一旦发起，这里会被结果整体替换。 -->
@@ -4401,7 +4419,10 @@ svg{width:100%;height:auto;display:block}
 
      为什么不是一开始的"开关"写法：那种写法里默认全开，用户点 arXiv 的
      本意是"查 arXiv"，结果那一栏反而被关掉了 —— 点了半天是反的。 */
-  const sourceButtons = () => [...document.querySelectorAll('#view-retrieve .src')];
+  // 同一条 .srcbar 的样式也用在「引用含金量」那一行上，那里的按钮带 data-min，
+  // 不是来源开关 —— 不排掉的话，「全部」会被认成"不限"那个按钮，点哪儿都不对。
+  const sourceButtons = () => [...document.querySelectorAll('#view-retrieve .src')]
+    .filter((b) => !b.dataset.min);
   const siteButtons = () => sourceButtons().filter((b) => b.dataset.src);
   const isOn = (btn) => btn.getAttribute('aria-pressed') === 'true';
   const allButton = () => sourceButtons().find((b) => !b.dataset.src);
@@ -4437,15 +4458,51 @@ svg{width:100%;height:auto;display:block}
     }
   }
 
+  /* 引用含金量：门槛与被引排序都只作用在**已经拿到的这批结果**上。
+     门槛按钮取"点一下换成它"，不叠加 —— 同时选"≥10"和"≥100"没有意义，
+     而"取消筛选"最自然的动作是点「不限」。 */
+  let hlMin = 0;
+  const hlButtons = () => [...document.querySelectorAll('#view-retrieve .src[data-min]')];
+
+  function pickHL(btn) {
+    hlMin = Number(btn.dataset.min) || 0;
+    hlButtons().forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+    if (ARX.data) renderArxivHits(ARX.data);
+  }
+
   function renderArxivHits(data) {
     const ok = data.sources.filter((s) => s.ok);
     const bad = data.sources.filter((s) => !s.ok);
+    const rated = data.hits.filter((h) => h.citations > 0);
+    let hits = data.hits;
+
+    if (hlMin > 0) {
+      // 没有 citations_source 的结果**不算**被筛掉的理由是"被引少"——
+      // 那是"这个来源没给数"（arXiv 接口就没有这个字段）。但它们确实过不了门槛，
+      // 所以单独计数并在下面说明，而不是让它们悄悄消失。
+      hits = hits.filter((h) => h.citations >= hlMin);
+    }
+    if ($('arx-sort').value === 'citations') {
+      hits = [...hits].sort((a, b) => b.citations - a.citations);
+    }
+
     const parts = [`${data.hits.length} 条结果`];
+    if (hlMin > 0) parts.push(`按被引 ≥ ${hlMin} 筛出 ${hits.length} 条`);
+    if (rated.length) parts.push(`${rated.length} 条带被引数`);
     if (ok.length) parts.push(`${ok.map((s) => s.label).join('、')} 已返回`);
     if (bad.length) parts.push(`${bad.map((s) => s.label).join('、')} 暂不可用`);
     $('arx-state').textContent = parts.join(' · ');
 
     const out = $('arx-out');
+    if (data.hits.length && !hits.length) {
+      out.replaceChildren(
+        el('p', { class: 'note', style: 'margin:0 0 8px' },
+          `这批结果里没有被引 ≥ ${hlMin} 的条目。门槛只作用于本次返回的 ${data.hits.length} 条，`
+          + '并不代表文献库里没有这类文献 —— 换一个检索词，或把门槛调回「不限」即可看到全部。'),
+        el('p', { class: 'note', style: 'margin:0' },
+          'arXiv 与 Zenodo 的接口不提供被引次数，来自这两站的结果只能按「不限」查看。'));
+      return;
+    }
     if (!data.hits.length) {
       out.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
         ok.length
@@ -4458,7 +4515,12 @@ svg{width:100%;height:auto;display:block}
       ? [el('p', { class: 'note', style: 'margin:0 0 10px;color:var(--warn)' },
         `以下来源这次没取到：${bad.map((s) => `${s.label}（${s.note}）`).join('；')}`)]
       : [];
-    out.replaceChildren(...warn, ...data.hits.map(hitRow));
+    const hint = hlMin > 0
+      ? [el('p', { class: 'note', style: 'margin:0 0 10px' },
+        `已在 ${data.hits.length} 条结果中按被引 ≥ ${hlMin} 筛出 ${hits.length} 条；`
+        + '没有被引次数的结果（arXiv、Zenodo 不提供）一并不在其中。')]
+      : [];
+    out.replaceChildren(...warn, ...hint, ...hits.map(hitRow));
   }
 
   function hitRow(r) {
@@ -4481,7 +4543,13 @@ svg{width:100%;height:auto;display:block}
     const names = r.authors.length > 3
       ? `${r.authors.slice(0, 3).join('、')} 等 ${r.authors.length} 人`
       : r.authors.join('、');
-    const meta = [names, r.year, r.venue, r.arxiv_id ? `arXiv:${r.arxiv_id}` : '']
+    // 被引数只在**真有来源给出**时才显示。0 且没有出处 = 这个站没给数，
+    // 印一个「被引 0」会让一篇高被引论文看着无人问津。
+    const cited = r.citations > 0
+      ? `被引 ${r.citations.toLocaleString('zh-CN')}`
+        + (r.citations_source ? `（${SOURCE_LABEL[r.citations_source] || r.citations_source}）` : '')
+      : '';
+    const meta = [names, r.year, r.venue, cited, r.arxiv_id ? `arXiv:${r.arxiv_id}` : '']
       .filter(Boolean).join(' · ');
     return el('div', { class: 'hitrow', style: 'margin-bottom:10px' },
       el('h4', {}, r.title),
@@ -5071,6 +5139,9 @@ svg{width:100%;height:auto;display:block}
     // 高亮本身已经说清选了谁，不再往状态行里重复一遍
     $('arx-state').textContent = '';
   }));
+  // 引用含金量：门槛按钮 + 排序下拉。两者都只重排已经拿到的结果，不再发请求
+  hlButtons().forEach((btn) => btn.addEventListener('click', () => pickHL(btn)));
+  $('arx-sort')?.addEventListener('change', () => { if (ARX.data) renderArxivHits(ARX.data); });
   $('rv-run')?.addEventListener('click', runReview);
   $('rv-topic')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runReview(); });
 

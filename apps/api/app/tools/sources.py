@@ -75,6 +75,12 @@ class Hit:
     pdf_url: str = ""
     abs_url: str = ""
     arxiv_id: str = ""
+    # 被引次数（赛题模块四的「引用含金量」筛选要用）。0 的含义是**取不到**，
+    # 不是"没被引过"：arXiv 的 Atom 接口压根不提供这个数，Zenodo 同理。
+    # 界面上必须把这两种情况分开说，否则用户会以为一篇高被引论文无人问津。
+    citations: int = 0
+    # 这个数是哪个站给的：界面上写「被引 1234（OpenAlex）」，而不是一个不知出处的数字
+    citations_source: str = ""
 
     @property
     def can_ingest(self) -> bool:
@@ -98,6 +104,20 @@ class SearchResponse:
     limit: int
     hits: list[Hit]
     sources: list[SourceReport]
+
+
+def _cited(value: object, source: str) -> tuple[int, str]:
+    """把各站五花八门的"被引次数"字段收成 (次数, 出处)。
+
+    取不到（None / 空串 / "N/A" / 负数）一律回 (0, "")：0 的语义是
+    **这个站没给数**，不是"没被引过"。arXiv 的 Atom 接口就不提供这个字段，
+    界面上要是把 0 直接印成"0 次被引"，一篇高被引论文会显得无人问津。
+    """
+    try:
+        number = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        number = 0
+    return (number, source) if number > 0 else (0, "")
 
 
 def _arxiv_id_from(*values: str) -> str:
@@ -166,6 +186,7 @@ def _search_openalex(query: str, limit: int, fetch: Fetch | None) -> tuple[list[
         doi = work.get("doi") or ""
         pdf_url = best.get("pdf_url") or primary.get("pdf_url") or ""
         abs_url = primary.get("landing_page_url") or doi
+        cited, cited_from = _cited(work.get("cited_by_count"), "openalex")
         hits.append(
             Hit(
                 source="openalex",
@@ -180,6 +201,8 @@ def _search_openalex(query: str, limit: int, fetch: Fetch | None) -> tuple[list[
                 pdf_url=pdf_url,
                 abs_url=abs_url,
                 arxiv_id=_arxiv_id_from(pdf_url, doi),
+                citations=cited,
+                citations_source=cited_from,
             )
         )
     return hits, ""
@@ -192,7 +215,8 @@ def _search_crossref(query: str, limit: int, fetch: Fetch | None) -> tuple[list[
     url = (
         f"{CROSSREF_URL}?query.bibliographic={quote(query, safe='')}"
         f"&rows={limit}&mailto=demo@example.com"
-        f"&select=DOI,title,author,issued,container-title,type,link,URL"
+        f"&select=DOI,title,author,issued,container-title,type,link,URL,"
+        f"is-referenced-by-count"
     )
     data = _fetch_json(url, fetch=fetch)
     items = ((data.get("message") or {}).get("items")) or []
@@ -205,6 +229,7 @@ def _search_crossref(query: str, limit: int, fetch: Fetch | None) -> tuple[list[
                 pdf_url = link.get("URL") or ""
                 break
         issued = (item.get("issued") or {}).get("date-parts") or [[""]]
+        cited, cited_from = _cited(item.get("is-referenced-by-count"), "crossref")
         hits.append(
             Hit(
                 source="crossref",
@@ -219,6 +244,8 @@ def _search_crossref(query: str, limit: int, fetch: Fetch | None) -> tuple[list[
                 pdf_url=pdf_url,
                 abs_url=(f"https://doi.org/{doi}" if doi else item.get("URL") or ""),
                 arxiv_id=_arxiv_id_from(doi, pdf_url),
+                citations=cited,
+                citations_source=cited_from,
             )
         )
     return hits, ""
@@ -232,7 +259,7 @@ def _search_semanticscholar(
 ) -> tuple[list[Hit], str]:
     url = (
         f"{S2_URL}?query={quote(query, safe='')}&limit={limit}"
-        "&fields=title,year,authors,abstract,externalIds,openAccessPdf,venue"
+        "&fields=title,year,authors,abstract,externalIds,openAccessPdf,venue,citationCount"
     )
     headers = {}
     key = _s2_api_key()
@@ -251,6 +278,7 @@ def _search_semanticscholar(
     for paper in data.get("data") or []:
         ids = paper.get("externalIds") or {}
         oa = (paper.get("openAccessPdf") or {}).get("url") or ""
+        cited, cited_from = _cited(paper.get("citationCount"), "semanticscholar")
         hits.append(
             Hit(
                 source="semanticscholar",
@@ -264,6 +292,8 @@ def _search_semanticscholar(
                 abs_url=(f"https://www.semanticscholar.org/paper/{paper.get('paperId')}"
                          if paper.get("paperId") else ""),
                 arxiv_id=_arxiv_id_from(str(ids.get("ArXiv") or ""), oa, str(ids.get("DOI") or "")),
+                citations=cited,
+                citations_source=cited_from,
             )
         )
     return hits, ""
@@ -384,6 +414,16 @@ def _merge(first: Hit, later: Hit) -> Hit:
         abs_url=first.abs_url or later.abs_url,
         # 前面那条不能入库、后面那条能 —— 补上 id，用户就能少跳一次
         arxiv_id=first.arxiv_id or later.arxiv_id,
+        # 被引数：**取各站里最大的那个**。三个站的口径与更新频率都不同
+        # （Crossref 只统计登记了引用的出版方，通常偏低；OpenAlex 最全），
+        # 取最小会系统性地把高被引论文压下去，取最大至少是"至少被引过这么多次"。
+        # 界面上标的是"被引 N（OpenAlex / S2 口径）"，不假装它有唯一真值。
+        citations=max(first.citations, later.citations),
+        # 出处跟着胜出的那个数走；打平时保留先出现的来源（来源顺序是固定的）
+        citations_source=(
+            first.citations_source if first.citations >= later.citations
+            else later.citations_source
+        ),
     )
 
 

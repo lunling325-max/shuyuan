@@ -8,6 +8,9 @@
 4. **认得出 arXiv 的各种写法** —— pdf 链接、abs 链接、10.48550/arxiv.* 的 DOI。
 
 所有请求都走注入的假 fetch，一个网络包都不发。
+
+另有第五件事（E-040 起的「引用含金量」）：**被引次数不能凭空出现，也不能凭空消失**。
+各站这个字段的名字各不相同，取不到时必须是"没有数"而不是"0 次"。
 """
 
 from __future__ import annotations
@@ -18,7 +21,14 @@ import time
 import pytest
 
 from app.tools import sources
-from app.tools.sources import Hit, _arxiv_id_from, _dedupe_keys, search_sources
+from app.tools.sources import (
+    Hit,
+    _arxiv_id_from,
+    _cited,
+    _dedupe_keys,
+    _merge,
+    search_sources,
+)
 
 ARXIV_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -128,6 +138,58 @@ ZENODO_RECORDS = {
             }
         ]
     }
+}
+
+
+# 三站对"被引次数"各有各的叫法：OpenAlex 是 cited_by_count，Crossref 是
+# is-referenced-by-count，S2 是 citationCount。标题故意各不相同，免得被去重并成一条。
+OPENALEX_CITED = {
+    "results": [
+        {
+            "id": "https://openalex.org/W2963403868",
+            "display_name": "Attention Is All You Need",
+            "publication_year": 2017,
+            "doi": "https://doi.org/10.48550/arxiv.1706.03762",
+            "cited_by_count": 136007,
+            "authorships": [{"author": {"display_name": "Ashish Vaswani"}}],
+            "primary_location": {
+                "source": {"display_name": "arXiv"},
+                "landing_page_url": "https://arxiv.org/abs/1706.03762",
+            },
+            "best_oa_location": {"pdf_url": "https://arxiv.org/pdf/1706.03762"},
+        }
+    ]
+}
+
+CROSSREF_CITED = {
+    "message": {
+        "items": [
+            {
+                "DOI": "10.1109/cvpr.2016.90",
+                "title": ["Deep Residual Learning for Image Recognition"],
+                "author": [{"given": "Kaiming", "family": "He"}],
+                "issued": {"date-parts": [[2016]]},
+                "container-title": ["CVPR"],
+                "link": [],
+                "is-referenced-by-count": 214800,
+            }
+        ]
+    }
+}
+
+S2_CITED = {
+    "data": [
+        {
+            "paperId": "abc123",
+            "title": "BERT: Pre-training of Deep Bidirectional Transformers",
+            "year": 2019,
+            "authors": [{"name": "Jacob Devlin"}],
+            "externalIds": {"ArXiv": "1810.04805"},
+            "openAccessPdf": {"url": "https://arxiv.org/pdf/1810.04805"},
+            "venue": "NAACL",
+            "citationCount": 99000,
+        }
+    ]
 }
 
 
@@ -295,6 +357,88 @@ def test_empty_query_returns_nothing_without_calling_out():
     assert all(not r.ok for r in result.sources)
 
 
+# ------------------------------------------------------------------ 引用含金量
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (12, (12, "openalex")),
+        ("12", (12, "openalex")),      # Crossref 偶尔把数字写成字符串
+        (7.9, (7, "openalex")),        # 小数向下取整，不四舍五入成 8
+        (0, (0, "")),
+        (None, (0, "")),
+        ("", (0, "")),
+        ("N/A", (0, "")),
+        (-3, (0, "")),
+    ],
+)
+def test_citation_value_of_junk_means_unknown_not_zero(value, expected):
+    """`0` 的语义是"这个站没给数"，所以出处必须一起空掉。
+
+    界面上只要看见 `citations_source` 为空就不印"被引 0" —— 印了的话，
+    一篇高被引论文会显得无人问津，反过来一篇真没人引的也会显得是"取不到"。
+    两个含义必须能分开。
+    """
+    assert _cited(value, "openalex") == expected
+
+
+def test_each_source_citation_field_is_read_under_its_own_name():
+    fetch = _dispatcher({
+        "export.arxiv.org": EMPTY_FEED,
+        "api.openalex.org": _json(OPENALEX_CITED),
+        "api.crossref.org": _json(CROSSREF_CITED),
+        "api.semanticscholar.org": _json(S2_CITED),
+    })
+    result = search_sources("x", limit=5,
+                            sources=["openalex", "crossref", "semanticscholar"], fetch=fetch)
+
+    got = {(h.source, h.citations, h.citations_source) for h in result.hits}
+    assert got == {
+        ("openalex", 136007, "openalex"),
+        ("crossref", 214800, "crossref"),
+        ("semanticscholar", 99000, "semanticscholar"),
+    }
+
+
+def test_arxiv_and_zenodo_hits_carry_no_citation_count():
+    """这两站的接口里根本没有这个字段 —— 必须是"没有"，不能补一个 0。"""
+    fetch = _dispatcher({
+        "export.arxiv.org": ARXIV_FEED,
+        "zenodo.org": _json(ZENODO_RECORDS),
+    })
+    result = search_sources("x", limit=5, sources=["arxiv", "zenodo"], fetch=fetch)
+
+    assert result.hits
+    for hit in result.hits:
+        assert hit.citations == 0
+        assert hit.citations_source == ""
+
+
+def test_merge_keeps_the_larger_count_and_the_source_that_reported_it():
+    arxiv_side = Hit(source="arxiv", source_id="1706.03762", title="Attention Is All You Need")
+    openalex_side = Hit(source="openalex", source_id="W1", title="Attention Is All You Need",
+                        citations=136007, citations_source="openalex")
+
+    merged = _merge(arxiv_side, openalex_side)
+    assert merged.source == "arxiv"                 # 元数据仍以先到的站为准
+    assert (merged.citations, merged.citations_source) == (136007, "openalex")
+
+    # 后面那条数更小 —— 不覆盖，出处也不跟着换
+    smaller = _merge(merged, Hit(source="crossref", source_id="10.1/x", title="x",
+                                 citations=12, citations_source="crossref"))
+    assert (smaller.citations, smaller.citations_source) == (136007, "openalex")
+
+    # 打平时保留先出现的来源，这样同一批结果两次刷新不会跳动
+    tie = _merge(
+        Hit(source="openalex", source_id="W1", title="t", citations=5,
+            citations_source="openalex"),
+        Hit(source="crossref", source_id="10.1/x", title="t", citations=5,
+            citations_source="crossref"),
+    )
+    assert (tie.citations, tie.citations_source) == (5, "openalex")
+
+
 # ------------------------------------------------------------------ 端点
 
 
@@ -352,6 +496,23 @@ def test_search_endpoint_accepts_bogus_source_list(client, monkeypatch):
     assert response.status_code == 200
     # 一个都不认识 → 退回查全部，而不是返回空列表
     assert len(response.json()["sources"]) == len(sources.SOURCES)
+
+
+def test_search_endpoint_passes_citation_fields_through(client, monkeypatch):
+    """序列化漏一行，界面上的筛选就永远是"没有一条带被引数"。
+
+    `SearchHitOut(**asdict(hit))` 是全量展开，字段漏在模型里会直接抛
+    ValidationError；这里从响应那头验一遍，而不是相信它自动接上了。
+    """
+    monkeypatch.setattr(sources.net, "fetch_bytes",
+                        lambda url, **kwargs: _json(OPENALEX_CITED))
+
+    response = client.get("/api/tools/search",
+                          params={"q": "attention", "sources": "openalex"})
+    assert response.status_code == 200
+    hit = response.json()["hits"][0]
+    assert hit["citations"] == 136007
+    assert hit["citations_source"] == "openalex"
 
 
 def test_search_endpoint_without_network_still_answers(client, monkeypatch):
