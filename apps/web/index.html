@@ -730,7 +730,7 @@ svg{width:100%;height:auto;display:block}
     <button class="btn" id="refresh-btn">刷新</button>
   </div>
 
-  <p class="note" id="upload-status" hidden></p>
+  <p class="note" id="upload-status" role="status" aria-live="polite" hidden></p>
   <div class="alert" id="dup-alert" hidden></div>
   <div class="card batch" id="batch-list" hidden></div>
 
@@ -795,7 +795,7 @@ svg{width:100%;height:auto;display:block}
           图表 <span class="chip" id="visual-count">—</span>
         </button>
         <span class="spacer"></span>
-        <span class="chip" id="qa-chip">未提问</span>
+        <span class="chip" id="qa-chip" role="status" aria-live="polite">未提问</span>
       </div>
       <div class="body" id="qa-body">
         <p class="note" style="margin:0">可就任意细节提问。每条结论均核验至原文页码与坐标框，
@@ -985,7 +985,7 @@ svg{width:100%;height:auto;display:block}
         </select></label>
         <button class="btn primary" id="rv-run">生成综述</button>
       </div>
-      <span class="sub" id="rv-state" style="margin:0"></span>
+      <span class="sub" id="rv-state" role="status" aria-live="polite" style="margin:0"></span>
       <div id="rv-out" style="margin-top:14px">
         <p class="note" style="margin:0">输入主题后点击「生成综述」。各要点后的编号可点击跳转至对应原文。</p>
       </div>
@@ -1021,7 +1021,7 @@ svg{width:100%;height:auto;display:block}
       <div style="display:flex;gap:var(--sp-2);align-items:center;flex-wrap:wrap;margin-bottom:18px">
         <button class="btn" id="ag-plan">只规划</button>
         <button class="btn primary" id="ag-run">规划并执行</button>
-        <span class="sub" id="ag-state" style="margin:0"></span>
+        <span class="sub" id="ag-state" role="status" aria-live="polite" style="margin:0"></span>
       </div>
       <h1 style="font-size:var(--fs-md);margin:0 0 10px">计划</h1>
       <div id="ag-plan-out">
@@ -1061,7 +1061,7 @@ svg{width:100%;height:auto;display:block}
       </div>
       <div style="display:flex;gap:var(--sp-2);align-items:center;margin-bottom:18px">
         <button class="btn primary" id="cp-run">生成框架</button>
-        <span class="sub" id="cp-state" style="margin:0"></span>
+        <span class="sub" id="cp-state" role="status" aria-live="polite" style="margin:0"></span>
       </div>
       <div id="cp-out">
         <p class="note" style="margin:0">输入研究构想后点击「生成框架」。各要点后的编号可点击跳转至原文。</p>
@@ -1343,8 +1343,26 @@ svg{width:100%;height:auto;display:block}
 
   // ---------------------------------------------------------------- 基础
 
+  /** fetch 自己失败（断网、DNS 挂了、服务没起来、CORS）抛的是 TypeError，
+      message 只有一句 "Failed to fetch" —— 浏览器的内部措辞，用户看不出该干什么。
+      而各处的错误提示都是 `生成失败：${err.message}`，这句话会被原样印在界面上。
+      AbortError 不动：那个由调用方自己解释（"等了两分钟已放弃"之类）。 */
+  function friendlyNetError(err) {
+    if (err instanceof TypeError) {
+      const e = new Error('连不上后端服务（网络中断或服务未启动），请稍后重试');
+      e.cause = err;
+      return e;
+    }
+    return err;
+  }
+
   async function api(path, options) {
-    const res = await fetch(API + path, options);
+    let res;
+    try {
+      res = await fetch(API + path, options);
+    } catch (err) {
+      throw friendlyNetError(err);
+    }
     if (!res.ok) {
       // detail 可能是字符串，也可能是结构化对象（409 去重冲突就带
       // {message, existing, uploaded}）。两种情况都要能拿到人话，
@@ -3004,7 +3022,7 @@ svg{width:100%;height:auto;display:block}
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, k: 6 }),
         signal: ctrl.signal,
-      });
+      }).catch((err) => { throw friendlyNetError(err); });
       if (!res.ok || !res.body) { await askOnce(question, body); return; }
 
       const reader = res.body.getReader();
