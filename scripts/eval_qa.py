@@ -301,6 +301,9 @@ def judge(result: Result, body: dict) -> None:
 
 
 def main() -> int:
+    # 逐题结果里有 ✓ / ✗ / 中文题面：Windows 控制台默认 GBK，编不出来就
+    # UnicodeEncodeError，跑完一遍却什么都没打印、还把逐题循环从中途打断。
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     parser = argparse.ArgumentParser(description="端到端评测：引用溯源 + 拒答")
     parser.add_argument("--base-url", default="http://127.0.0.1:8017")
     parser.add_argument("--questions", default=str(QUESTIONS))
@@ -311,6 +314,15 @@ def main() -> int:
     )
     parser.add_argument("--only", default="", help="只跑指定题号，逗号分隔，如 1,3,9")
     args = parser.parse_args()
+
+    # 相对路径按**仓库根**算，不按当时的工作目录算。README 里的用法是
+    # `uv run --directory apps/api python ../../scripts/eval_qa.py --out build/eval-qa.md`，
+    # 而 --directory 会把工作目录换成 apps/api —— 照工作目录走，文件会悄悄落到
+    # apps/api/build/ 里，人按 README 去 build/ 找是空的。
+    for flag in ("out", "json_out"):
+        value = getattr(args, flag)
+        if value and not Path(value).is_absolute():
+            setattr(args, flag, str(ROOT / value))
 
     spec = json.loads(Path(args.questions).read_text(encoding="utf-8"))
     items = list(

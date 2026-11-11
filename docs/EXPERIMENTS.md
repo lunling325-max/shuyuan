@@ -3012,3 +3012,118 @@ E-033 把键盘走通了，但"按下回车之后发生了什么"仍然只写进
   而且一定有一处会被忘掉 —— 这次就差点漏掉绕开 `api()` 的那条 SSE。
 - **失败时保住旧数据，比清空体面。** 推荐页刷新失败会把上一批原样留着并说明
   "这是上一次的"，这次实测确认它真的保住了 —— 清空等于用一次网络抖动惩罚用户。
+
+## E-036 · 把 README 当成别人的文档跑一遍：三处只在别人机器上现形，两处是文档自己写错
+
+E-033 到 E-035 都在用浏览器点这个系统。这一轮换人：**假装第一次拿到这个仓库**，
+只按 README 上写的命令走，看哪一步会塌。
+
+做法是把 `git archive HEAD` 解到一个空目录（等于一次干净 clone：没有 `data/`、
+没有 `pdf/`、没有 `.venv`、没有 `.env`，也没有任何本机缓存），然后从「快速开始」
+第一行开始照抄。
+
+### 一、照着走能走通的
+
+| README 里的话 | 实测 |
+|---|---|
+| `./scripts/dev.sh` | 建 `.env`、`uv sync`（4.8 s，走本机 uv 缓存）、起 uvicorn，`/api/health` 返回 `{"ok":true,"papers":0,"llm_configured":false}` |
+| `.\scripts\dev.ps1 -Port 8031` | 同样起来，中文提示不乱码（文件存的是 UTF-8 with BOM） |
+| 打开 <http://127.0.0.1:8017/> | 首屏 200、234 KB；`/docs` 200 |
+| 「把 PDF 放进 `pdf/`，再 `uv run python scripts/seed_demo.py`」 | 从**仓库根**跑得动（脚本只用标准库）：两篇入库，15 页 / 28 块、16 页 / 35 块 |
+| `/?paper=<id>&ask=<问题>` 深链 | 直接落到阅读器并自动提问，召回 6 块 |
+| 「不填 key 也能跑」 | 见下表 —— 一条假话，见第二节 |
+
+无 key 时逐个接口实测：
+
+| 接口 | 状态码 | 表现 |
+|---|---|---|
+| `POST /papers/{id}/qa`（`mode=retrieve`） | 200 | 召回 6 块，25 ms |
+| `POST /papers/{id}/qa`（`mode=answer`） | **503** | 界面写「生成中断（llm）：大模型未配置（缺少 DEEPSEEK_API_KEY），以上为仅检索结果」并提示切「只给证据」 |
+| `POST /review`、`/copilot/outline`、`/agent/plan` | 200 | `degraded=true` |
+| `POST /dataviz/chart`、`/translate/zh-en` | 200 | `degraded=true`，图表与原文照常返回 |
+| `GET /recommend`、`/tools/search` | 200 | 真的联网：572 ms 拿到 3 条推荐，3.5 s 拿到 arXiv 结果 |
+
+### 二、README 有一句是错的
+
+原文写着「依赖模型的接口返回 200 + `degraded`」。问答的 `answer` 模式不是：
+它返回 **503**，不返回 200。界面处理得没问题（上面那句提示就是它写的），
+但文档把六条路径一口气说成同一件事，评测时用 curl 一敲就露。
+
+改法不是把接口改成 200（503 对"这个能力此刻不可用"是准确的），而是把文档写准：
+README 和 TECH.md 的 R4、环境变量表都改成「综述／框架／图表／中译英 200 + `degraded`；
+问答 503 且界面写明原因」。
+
+### 三、三处只在别人的机器上才现形
+
+**1. `uv run pytest -q` 从零 clone：22 failed、99 errors。**
+
+`pdf/` 在 `.gitignore` 里，而 20 多个测试模块顶部写着
+`PDF_V7 = ROOT / "pdf" / "1706.03762v7.pdf"` 这类常量，fixture 直接
+`path.read_bytes()`。没有这些文件，用例在 setup 阶段就炸，一片红里看不出
+"代码坏了"还是"少了资料"。
+
+处理：新增 `apps/api/tests/conftest.py` —— 收集时扫每个模块的常量，
+指向 `pdf/` 但文件不在的，把该模块的用例标成 skip，理由写明缺哪个文件、
+放进 `pdf/` 就能跑。实测：
+
+```
+从零 clone：       173 passed,  296 skipped      0 failed
+本机（有 PDF）：    469 passed                     0 skipped
+```
+
+原来的 469 一项没少，红也不再掩盖真问题。
+
+**2. `scripts/eval_qa.py` 在 Windows 控制台跑不完。**
+
+```
+UnicodeEncodeError: 'gbk' codec can't encode character '\u2713' in position 5
+```
+
+逐题结果里印的是 `✓`，Windows 控制台默认 GBK。整轮 24 题跑到第 1 题就抛异常，
+`--out` 也没写出来 —— 而 README 就让人在 Windows 上这么跑。跟 `shoot.py` 一样
+加一行 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`。
+
+**3. `--out build/eval-qa.md` 写进了 `apps/api/build/`。**
+
+README 的用法是 `uv run --directory apps/api python ../../scripts/eval_qa.py --out build/eval-qa.md`，
+`--directory` 会把工作目录换成 `apps/api`，相对路径跟着走，人按文档去仓库根的
+`build/` 找是空的（脚本还打印"已写入 build\eval-qa.md"，更让人以为是自己的问题）。
+改成相对路径一律按仓库根解析。
+
+**4. 仓库根混进一个 0 字节文件。**
+
+`claude --resume d4550626-….txt`，10 月 31 日一次 shell 重定向的残留，被顺手提交了。
+陌生人 clone 下来第一眼就是它。删掉。
+
+### 四、修完之后复跑的数字
+
+同一条 README 命令，打线上服务（2C4G）：
+
+| 指标 | 结果（2026-11-11） |
+|---|---|
+| 题数（答 / 拒） | 24（15 / 9） |
+| 通过 | 24 / 24 |
+| 引用准确率（回 PDF 独立核验） | **52 / 52 = 100%** |
+| 拒答正确率 | **9 / 9** |
+| 反向对照（改坏引用应被拒） | **12 / 12** |
+| 单题耗时 中位数 / 最长 | 1999 ms / 5597 ms |
+
+（11-07 那次是 53 / 53、1851 / 5157 ms。差一条引用、慢 148 ms，来源是库里多了一篇
+GLU 论文、题单里有一题的召回块数从 4 变 3 —— 不是回归。）
+
+### 五、顺便把技术文档重印了
+
+`build/TECH.pdf` 停在 11-07，正文还是 E-022 的口径。用 `docs/print.css` 文件头那两条
+命令重生成：pandoc 3.9.0.2 → Edge `--headless=new`，**20 页**（原 17 页）、11 张实机
+截图全在、版本号改成 1.1 / 2026-11-11。README 与 PLAN 里「17 页」的口径一起改掉。
+
+### 记一笔
+
+- **别人的机器上没有你的 `data/`、`pdf/`、`.env`。** 测试和脚本只要读这些，
+  就得想清楚缺了之后是"跳过并说明"还是"红成一片"——后者会教人忽略红灯。
+- **工作目录也是文档的一部分。** `--directory apps/api` 把 cwd 换掉了，
+  文档里所有相对路径都得按文档给的调用方式实跑一遍才算数。
+- **文档里的承诺要能一条条敲。** "返回 200 + degraded" 这种句子写成一句，
+  就得六条路径逐个 curl 过；错一条，评委会觉得整份文档都没核过。
+- **交付物不是代码，是别人照着能不能跑。** 这一步花的两个小时，比再修两个
+  UI 细节值 —— 它决定的是别人有没有机会看到那些细节。
