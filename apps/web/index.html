@@ -1151,6 +1151,21 @@ svg{width:100%;height:auto;display:block}
   const viewEls = [...document.querySelectorAll('.view')];
   const main = document.querySelector('main');
 
+  /** 把导航里当前那一格滚进视野（窄屏才需要，宽屏本来就全看得见）。
+
+      只动 nav.scrollLeft，不碰页面滚动位置：activate() 刚把 main.scrollTop
+      归零，用 scrollIntoView 会顺手把整页再滚一次，跳到哪都像"页面错位"。 */
+  function syncNavScroll(name) {
+    const btn = nav.querySelector(`button[data-v="${name}"]`);
+    if (!btn || nav.scrollWidth <= nav.clientWidth) return;
+    // 用两块 getBoundingClientRect 的差值，而不是 offsetLeft：offsetLeft 相对
+    // 的是最近的那个定位祖先，导航条本身不一定定位，算出来的数会莫名其妙。
+    const navRect = nav.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    const delta = (btnRect.left - navRect.left) + btnRect.width / 2 - nav.clientWidth / 2;
+    nav.scrollLeft = Math.max(0, Math.min(nav.scrollLeft + delta, nav.scrollWidth - nav.clientWidth));
+  }
+
   function activate(name, { replaceHash = true } = {}) {
     if (!VIEWS.includes(name)) name = 'library';
     nav.querySelectorAll('button').forEach(btn => {
@@ -1160,6 +1175,11 @@ svg{width:100%;height:auto;display:block}
     });
     viewEls.forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
     if (main) main.scrollTop = 0;
+    /* 窄屏上导航是一条横向滚动的带子（390px 时可见宽 293px、内容 674px）。
+       选中的那一格可能整个在视野外 —— 打开 #copilot 深链时，屏幕上四个
+       tab 全不是当前页，看着像"没选中任何一栏"。把它滚到中间。
+       不用 scrollIntoView：它会连页面一起纵向滚，把刚归零的 main.scrollTop 又顶开。 */
+    syncNavScroll(name);
     if (replaceHash) {
       const hash = name === 'library' ? '' : '#' + name;
       if (location.hash !== hash) history.replaceState(null, '', hash || location.pathname);
@@ -1376,6 +1396,21 @@ svg{width:100%;height:auto;display:block}
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(e); }
     });
     return node;
+  }
+
+  /** 等模型的长操作：状态行写"在做什么"，超过 20 秒就把秒数挂上去。
+
+      没有进度可报，但"还在走"和"卡死了"在用户眼里是两种心情。实测过一次
+      Copilot 响应 101 秒（同一请求平时 7.6 秒），那段时间屏幕上只有一个骨架，
+      看起来完全像坏了。返回一个停止函数，调用方在 finally 里收掉。 */
+  function busyTicker(node, base, tooLong = 20) {
+    const t0 = Date.now();
+    node.textContent = base;
+    const timer = setInterval(() => {
+      const s = Math.round((Date.now() - t0) / 1000);
+      if (s >= tooLong) node.textContent = `${base}（已 ${s} 秒，仍在生成）`;
+    }, 1000);
+    return () => clearInterval(timer);
   }
 
   function showNote(text, kind = 'info') {
@@ -3588,8 +3623,8 @@ svg{width:100%;height:auto;display:block}
     $('cp-run').disabled = true;
     $('cp-out').replaceChildren(skeleton(4));
     $('cp-refs').replaceChildren(skeleton(2));
-    $('cp-state').textContent = (usedExample ? '输入框为空，改用示例构想：' : '')
-      + '检索库内原文 → 生成框架 → 核对引用…';
+    const stopTick = busyTicker($('cp-state'),
+      (usedExample ? '输入框为空，改用示例构想：' : '') + '检索库内原文 → 生成框架 → 核对引用…');
     try {
       const data = await api('/copilot/outline', {
         method: 'POST',
@@ -3597,6 +3632,7 @@ svg{width:100%;height:auto;display:block}
         body: JSON.stringify({ idea }),
       });
       CP.data = data;
+      stopTick();
       renderCopilot();
       $('cp-state').textContent = (data.degraded
         ? '大模型不可用：只列出检索到的原文'
@@ -3604,6 +3640,7 @@ svg{width:100%;height:auto;display:block}
         + (usedExample ? ' · 使用示例构想' : '');
     } catch (err) {
       CP.data = null;
+      stopTick();
       $('cp-state').textContent = '生成失败';
       $('cp-out').replaceChildren(el('p', { class: 'note', style: 'color:var(--warn)' },
         `生成失败：${err.message}`));
@@ -4363,7 +4400,7 @@ svg{width:100%;height:auto;display:block}
     $('rv-out').replaceChildren(skeleton(4));
     $('rv-refs').replaceChildren(skeleton(2));
     $('rv-future').replaceChildren(skeleton(2));
-    $('rv-state').textContent = '检索全库原文 → 写综述 → 核对引用…';
+    const stopTick = busyTicker($('rv-state'), '检索全库原文 → 写综述 → 核对引用…');
     try {
       const data = await api('/review', {
         method: 'POST',
@@ -4371,12 +4408,14 @@ svg{width:100%;height:auto;display:block}
         body: JSON.stringify({ topic, max_papers: Number($('rv-max').value) || 6 }),
       });
       RV.data = data;
+      stopTick();
       renderReview();
       $('rv-state').textContent = data.degraded
         ? `大模型不可用：只列出检索到的原文${data.note ? `（${data.note}）` : ''}`
         : `${data.sections.length} 节 · 引用 ${data.references.length} 条原文`;
     } catch (err) {
       RV.data = null;
+      stopTick();
       $('rv-state').textContent = '生成失败';
       $('rv-out').replaceChildren(el('p', { class: 'note', style: 'color:var(--warn)' },
         `生成失败：${err.message}`));
@@ -4599,7 +4638,8 @@ svg{width:100%;height:auto;display:block}
     AG.busy = true;
     $('ag-plan').disabled = true;
     $('ag-run').disabled = true;
-    $('ag-state').textContent = mode === 'run' ? '正在规划并执行…（需多次调用工具，耗时较长）' : '正在规划…';
+    const stopTick = busyTicker($('ag-state'),
+      mode === 'run' ? '正在规划并执行…（需多次调用工具，耗时较长）' : '正在规划…');
     try {
       const out = mode === 'run'
         ? await api('/agent/run', {
@@ -4625,8 +4665,10 @@ svg{width:100%;height:auto;display:block}
           '仅规划、不执行 —— 点击「规划并执行」才会实际调用工具。'));
         $('ag-evidence').replaceChildren();
       }
+      stopTick();
       $('ag-state').textContent = out.degraded ? '完成（大模型不可用，已降级）' : '完成';
     } catch (err) {
+      stopTick();
       $('ag-state').textContent = '';
       $('ag-plan-out').replaceChildren(el('p', { class: 'note', style: 'color:var(--warn)' },
         `执行失败：${err.message}`));

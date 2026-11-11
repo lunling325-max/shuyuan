@@ -559,6 +559,7 @@ Docker 两阶段构建，容器内以 `appuser`（uid 10001）非 root 运行，
 | 单用户、无并发控制 | 多人同时上传同一篇是幂等的（内容哈希），但没有鉴权、没有配额 | 比赛 demo 定位；公网部署时靠安全组与停机控制暴露面 |
 | 表格还原对合并单元格会退化 | 检测到合并单元格直接退回"逐格拼接"，不猜 | 宁可退化也不猜错位 |
 | 文档格式只支持 PDF | 无 Word / LaTeX 源文件解析 | 范围控制：arXiv 场景 PDF 覆盖率最高 |
+| 长尾取决于上游，不取决于我们 | 同一个 Copilot 请求实测 7.6 秒，也遇到过一次 **101.8 秒**；没有失败、没有重试，纯属模型侧排队。所有耗时数字都是当时测到的值，不是常数 | 拿它没辙，但能让它开口：三条长路径的状态行 20 秒后开始报秒数（E-034）。演示若遇到，界面写着「仍在生成」而不是像卡住 |
 
 ---
 
@@ -614,7 +615,7 @@ apps/api/app/
   agent/        planner.py（两阶段规划）、registry.py（10 个工具）
   analysis/     chart.py（手写 SVG 出图）
 apps/web/       index.html（单文件前端）、logo.svg、logo-lockup.svg
-docs/           EXPERIMENTS.md（33 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
+docs/           EXPERIMENTS.md（34 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
 scripts/        eval_qa.py + eval_questions.json（端到端评测：引用准确率 / 拒答正确率）
                 measure_crosslinks.py（图文互链覆盖率：多少张卡片在正文里真的被提到）
 ```
