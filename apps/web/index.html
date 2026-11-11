@@ -1502,6 +1502,28 @@ svg{width:100%;height:auto;display:block}
       '切换至本栏后开始解析。'));
   }
 
+  /** 库里一篇都没有：阅读器的目录还挂着 HTML 里那句「加载中…」，而打开它的是
+      openPaper —— 空库时没人会调，于是那句话永远停在那儿，看着像卡死。
+      第一次跑起来的人（还没上传任何 PDF）看到的就是这一屏。 */
+  function showEmptyReader() {
+    $('page-title').textContent = '库里还没有论文';
+    // 正文区是两栏（.cols），一句话会被拦腰折到右边；column-span:all 让它整行占满
+    $('page-text').replaceChildren(
+      el('p', { class: 'note', style: 'column-span:all' },
+        '到「文献库」点「＋ 上传 PDF」；也可以把 PDF 放进仓库根的 pdf/，再运行 scripts/seed_demo.py。'),
+    );
+    $('outline-list').replaceChildren(
+      el('p', { class: 'note', style: 'padding:0 var(--sp-3)' }, '还没有文献，目录为空。'),
+    );
+    // 空的 <select> 只剩一个箭头，看着像坏了 —— 给一条占位并锁住
+    const pick = $('paper-pick');
+    if (pick) {
+      pick.replaceChildren(el('option', { value: '' }, '（还没有文献）'));
+      pick.disabled = true;
+    }
+    $('paper-meta').textContent = '';
+  }
+
   /** 文献库的排列：**同一篇的多版本必须挨着**。
 
       库里有 1706.03762 的三份（v1、v1 的扫描件、v7），按上传顺序排的话它们
@@ -1994,6 +2016,8 @@ svg{width:100%;height:auto;display:block}
         const target = state.papers.find((p) => p.id === want) || state.papers[0];
         await openPaper(target.id);
         autoAsk();
+      } else if (!state.papers.length) {
+        showEmptyReader();     // 空库也要给阅读器一个收尾，别停在上传前的样子
       }
       autoCompare();
       // 库载完了再看一眼当前停在哪个视图：点 tab 进来时库可能还没就绪，
@@ -2177,6 +2201,7 @@ svg{width:100%;height:auto;display:block}
   function renderPaperPicker() {
     const sel = $('paper-pick');
     if (!sel) return;
+    sel.disabled = false;    // 库从空变成有：showEmptyReader 锁过它，这里解开
     const option = (p) => el('option', { value: p.id }, paperLabel(p));
     sel.replaceChildren(...state.papers.map(option));
     if (state.paper) sel.value = state.paper.id;
@@ -2923,6 +2948,29 @@ svg{width:100%;height:auto;display:block}
     body.scrollTop = body.scrollHeight;
   }
 
+  /** 检索到的原文块列表：每行点得进阅读器。成功收尾和"生成中断"两条路共用。 */
+  function evidenceList(hits) {
+    const list = el('div', { class: 'note', style: 'margin-top:var(--sp-4)' }, '本次检索到的原文块：');
+    hits.forEach((e, i) => {
+      list.append(el('div', { class: 'evrow' },
+        el('a', {
+          href: '#',
+          on: {
+            click: (ev) => {
+              ev.preventDefault();
+              // 流式事件里带的是 chunk_index，比"按节名+页码猜"精确
+              const chunk = state.chunks.find((c) => c.index === e.chunk_index)
+                || state.chunks.find((c) => c.section === e.section && c.page_start === e.page);
+              if (chunk) { goTo('reader'); renderChunk(chunk); }
+            },
+          },
+        }, `#${i + 1} p.${e.page} ${e.section} `),
+        el('span', { class: 'mono' }, Number(e.score || 0).toFixed(4)),
+      ));
+    });
+    return list;
+  }
+
   function renderStreamFinal(question, state_) {
     const body = $('qa-body');
     const { claims, hits, stats, tookMs } = state_;
@@ -2954,27 +3002,7 @@ svg{width:100%;height:auto;display:block}
       body.append(block);
     });
 
-    if (hits.length) {
-      const list = el('div', { class: 'note', style: 'margin-top:var(--sp-4)' }, '本次检索到的原文块：');
-      hits.forEach((e, i) => {
-        list.append(el('div', { class: 'evrow' },
-          el('a', {
-            href: '#',
-            on: {
-              click: (ev) => {
-                ev.preventDefault();
-                // 流式事件里带的是 chunk_index，比"按节名+页码猜"精确
-                const chunk = state.chunks.find((c) => c.index === e.chunk_index)
-                  || state.chunks.find((c) => c.section === e.section && c.page_start === e.page);
-                if (chunk) { goTo('reader'); renderChunk(chunk); }
-              },
-            },
-          }, `#${i + 1} p.${e.page} ${e.section} `),
-          el('span', { class: 'mono' }, Number(e.score || 0).toFixed(4)),
-        ));
-      });
-      body.append(list);
-    }
+    if (hits.length) body.append(evidenceList(hits));
     body.scrollTop = 0;
   }
 
@@ -2992,6 +3020,14 @@ svg{width:100%;height:auto;display:block}
     return data;
   }
 
+  // 流式问答的"生成中…"那行也要报秒：上游偶尔排队到一分钟以上，
+  // 一行不动的「生成中…」和卡死看不出区别（E-034 修的是综述/Agent/Copilot，
+  // 这条流式路径当时漏了 —— E-037 补上）。换问题、来 token、结束都停下。
+  let qaTick = null;
+  function stopQaTick() {
+    if (qaTick) { qaTick(); qaTick = null; }
+  }
+
   async function ask() {
     const input = $('qa-input');
     const question = input.value.trim();
@@ -2999,6 +3035,7 @@ svg{width:100%;height:auto;display:block}
 
     const btn = $('qa-send');
     btn.disabled = true;
+    stopQaTick();
     $('qa-chip').textContent = '检索中…';
     // 人在参考文献或图表栏上按回车也得看得见答案：先切回问答，
     // 否则结果写进了 hidden 的面板，看着像"问了没反应"
@@ -3048,11 +3085,13 @@ svg{width:100%;height:auto;display:block}
           } else if (ev.event === 'evidence') {
             acc.hits = p.hits || [];
             $('qa-chip').textContent = `召回 ${acc.hits.length} 块`;
-            body.replaceChildren(
-              el('div', { class: 'q' }, question),
-              el('div', { class: 'think' }, `检索词：${partial || question} · 召回 ${acc.hits.length} 块 · 生成中…`),
-            );
+            const base = `检索词：${partial || question} · 召回 ${acc.hits.length} 块 · 生成中…`;
+            const think = el('div', { class: 'think' }, base);
+            body.replaceChildren(el('div', { class: 'q' }, question), think);
+            stopQaTick();
+            qaTick = busyTicker(think, base);
           } else if (ev.event === 'token') {
+            stopQaTick();   // 有 token 落下就换成草稿，秒表留着会写进已经摘掉的节点
             acc.raw += p.text || '';
             renderDraft(body, question, acc.raw, acc.hits);
           } else if (ev.event === 'claims') {
@@ -3069,10 +3108,16 @@ svg{width:100%;height:auto;display:block}
               el('div', { class: 'q' }, question),
               el('p', { class: 'note', style: 'color:var(--warn)' },
                 `生成中断（${p.stage || 'unknown'}）：${p.message || ''}`),
+              // 以前这里说"可先用「只给证据」模式查看"，可界面上根本没有这个模式
+              // （只有接口的 mode=retrieve）—— 让人去找一个不存在的东西，比不给还糟糕。
+              // 改成就地列出这 N 段原文，点得进阅读器（E-037）。
               ...(acc.hits.length
-                ? [el('p', { class: 'note' }, `检索本身已成功：召回 ${acc.hits.length} 段原文，可先使用「只给证据」模式查看。`)]
+                ? [el('p', { class: 'note' },
+                  `生成没成，但检索是成功的：召回 ${acc.hits.length} 段原文，列在下面，可自行核对。`),
+                  evidenceList(acc.hits)]
                 : []),
             );
+            body.scrollTop = 0;
             return;
           }
         }
@@ -3095,6 +3140,7 @@ svg{width:100%;height:auto;display:block}
         el('p', { class: 'note', style: 'color:var(--warn)' }, `问答失败：${err.message}`),
       );
     } finally {
+      stopQaTick();
       if (QSTREAM.abort === ctrl) QSTREAM.abort = null;
       btn.disabled = false;
     }

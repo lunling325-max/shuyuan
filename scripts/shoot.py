@@ -14,6 +14,7 @@
     … --keys Tab,Enter  --wait 之后真的按键盘（走 CDP，事件是 trusted 的）。
                         合成 KeyboardEvent 触发不了原生按钮的默认行为，
                         测"键盘能不能用"必须用这个
+    … --files "#sel:D:/a.pdf"  往文件输入框塞文件（走 CDP；JS 改不动 input.files）
     … --wait2 5000      再等多少毫秒之后执行 --js2（等 --js 触发的事做完）
     … --js2 "…"         读执行完的状态，和 --js 的返回值对照看
 """
@@ -107,8 +108,28 @@ def press_keys(cdp: "Cdp", spec: str) -> None:
         time.sleep(0.08)
 
 
+def set_files(cdp: "Cdp", spec: str) -> None:
+    """给 <input type=file> 塞文件（`--files "#upload-input:D:/a.pdf"`，多个用 `;` 隔开）。
+
+    为什么不能拿 JS 干这件事：`input.files` 是只读的，`value` 也只接受空串。
+    走 CDP 的 DOM.setFileInputFiles 是浏览器自己填的，change 事件会照常发出 ——
+    和真人点「上传」走同一条路。
+    """
+    doc = cdp.call("DOM.getDocument")["root"]["nodeId"]
+    for chunk in spec.split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        selector, _, path = chunk.partition(":")
+        node = cdp.call("DOM.querySelector", nodeId=doc, selector=selector.strip())["nodeId"]
+        if not node:
+            raise SystemExit(f"--files 找不到元素：{selector}")
+        cdp.call("DOM.setFileInputFiles", nodeId=node, files=[str(Path(path.strip()).resolve())])
+        print(f"files → {selector} ← {path.strip()}")
+
+
 def shoot(url: str, out: Path, width: int, height: int, dark: bool, js: str, wait: int,
-          js2: str = "", wait2: int = 0, keys: str = "") -> None:
+          js2: str = "", wait2: int = 0, keys: str = "", files: str = "") -> None:
     port = 9333
     profile = tempfile.mkdtemp(prefix="shoot-")
     proc = subprocess.Popen(
@@ -148,6 +169,10 @@ def shoot(url: str, out: Path, width: int, height: int, dark: bool, js: str, wai
                 "if(b){b.click();}else{document.documentElement.dataset.theme='dark';}}})()"
             ))
             time.sleep(0.2)
+        if files:
+            # 放在 --js 之前：上传要时间，让后面的 --js/--wait 去等它上完
+            cdp.call("DOM.enable")
+            set_files(cdp, files)
         if js:
             # timeout 必须显式给：`awaitPromise` 的默认上限远小于"等模型写完一篇综述"，
             # 超时后 CDP 报 "Inspected target navigated or closed"，看着像页面崩了
@@ -158,7 +183,9 @@ def shoot(url: str, out: Path, width: int, height: int, dark: bool, js: str, wai
                 print(f"eval ✗ {res['exceptionDetails'].get('exception', {}).get('description', '')[:200]}")
             elif value not in (None, ""):
                 print(f"eval → {value}")
-            time.sleep(wait / 1000)
+        # 睡在 if js 外面：只给 --files / --keys 时也要能等（上传要几十秒，
+        # 以前没 --js 就白等一场，--wait 被静悄悄忽略了）
+        time.sleep(wait / 1000)
         if keys:
             # 放在 --wait 之后：先让 --js 把焦点摆好，按键才有地方落
             press_keys(cdp, keys)
@@ -196,8 +223,11 @@ def main() -> int:
     ap.add_argument("--js2", default="", help="--wait 之后再执行一段，用来读第一段执行后的状态")
     ap.add_argument("--wait2", type=int, default=0)
     ap.add_argument("--keys", default="", help="--wait 之后按的键，逗号分隔，如 Tab,Enter")
+    ap.add_argument("--files", default="",
+                    help="往文件输入框塞文件：'选择器:路径'，多个用 ; 隔开（如 --files \"#upload-input:pdf/a.pdf\"）")
     a = ap.parse_args()
-    shoot(a.url, Path(a.out), a.width, a.height, a.dark, a.js, a.wait, a.js2, a.wait2, a.keys)
+    shoot(a.url, Path(a.out), a.width, a.height, a.dark, a.js, a.wait, a.js2, a.wait2, a.keys,
+          a.files)
     return 0
 
 

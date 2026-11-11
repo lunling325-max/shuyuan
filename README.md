@@ -32,7 +32,8 @@ uv run uvicorn app.api.main:app --reload --port 8017
 综述框架、图表、中译英、Agent 规划这些接口返回 200 + `degraded`，扫描件 OCR、
 表格与插图解析照常工作。问答的 `answer` 模式返回 503，界面当场写明
 「生成中断（llm）：大模型未配置（缺少 DEEPSEEK_API_KEY），以上为仅检索结果」，
-并提示切到「只给证据」模式看召回的证据块。这是有意设计——演示现场断网不该白屏。
+并把这次召回的原文块就地列在下面（每一条点得进阅读器对应段落）。这是有意设计——
+演示现场断网不该白屏。
 
 **中文提问也不依赖模型。** 内置一张"中文术语 → 英文检索词"的表（`app/rag/glossary.py`），
 不联网、不调模型，18 题开发集 Hit@1 88.9% / Hit@3 94.4%，13 题留出集 92.3%；
@@ -136,7 +137,7 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 | GET | `/api/tools/search` | 多来源检索：arXiv / OpenAlex / Crossref / Semantic Scholar / Zenodo 并发查、跨站去重，每站各自 `degraded`，`?sources=` 选站 |
 | GET | `/api/tools/arxiv/search` | 只查 arXiv（断网时 `degraded=true`，不报 500） |
 | POST | `/api/tools/arxiv/ingest` | 检索结果直接入库：下载 → 解析 → 去重 |
-| GET | `/api/agent/tools` | 9 个工具的名称、参数与返回契约 |
+| GET | `/api/agent/tools` | 10 个工具的名称、参数与返回契约 |
 | POST | `/api/agent/plan` | 只规划不执行：步骤 + 每步理由 |
 | POST | `/api/agent/run` | 规划 → 执行 → 观察 → 重规划，返回完整轨迹与可引用原文 |
 | POST | `/api/dataviz/chart` | CSV → 统计表 + SVG + TikZ/Mermaid/Matplotlib + 图注（数字逐个核验） |
@@ -234,7 +235,7 @@ uv run --directory apps/api python ../../scripts/eval_qa.py \
 | 文件 | 内容 |
 |---|---|
 | [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 11 张实机截图（PDF 20 页，`build/TECH.pdf`） |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 36 篇实验记录（E-001–E-036），每条结论带实测数字 |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 37 篇实验记录（E-001–E-037），每条结论带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑与对策） |
 | [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：时间轴、逐段口播、翻车预案；录屏成品 `build/shuyuan-demo.mp4`（6 分 26 秒） |

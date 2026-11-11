@@ -2,7 +2,7 @@
 
 > 版本 1.1 ｜ 2026-11-11 ｜ 对应仓库提交见 `git log`
 >
-> 本文所有结论都带实测数字，原始记录在 `docs/EXPERIMENTS.md`（E-001 ~ E-036）。
+> 本文所有结论都带实测数字，原始记录在 `docs/EXPERIMENTS.md`（E-001 ~ E-037）。
 > 凡是**被数据推翻**的设计，都保留在文中并标明推翻依据 —— 取舍过程本身就是方法的一部分。
 
 ---
@@ -47,7 +47,7 @@
 | R1 | 每条结论都能点回原文页码与坐标框 | 前端高亮 + 接口返回 `bbox` |
 | R2 | 无法溯源的结论必须被显式拦截并说明原因 | 三态：`supported` / `weak` / `unsupported` |
 | R3 | 扫描件（无文字层 PDF）同样可检索、可引用 | 与矢量版逐条比对章节树与参考文献 |
-| R4 | 大模型不可用时系统降级而非崩溃 | 综述／框架／图表／中译英返回 200 + `degraded`；问答返回 503 并在界面上写明"以上为仅检索结果"；检索与溯源照常 |
+| R4 | 大模型不可用时系统降级而非崩溃 | 综述／框架／图表／中译英返回 200 + `degraded`；问答返回 503，界面上写明"以上为仅检索结果"并把召回的原文块就地列出（点得进阅读器，E-037）；检索与溯源照常 |
 
 ---
 
@@ -615,7 +615,7 @@ apps/api/app/
   agent/        planner.py（两阶段规划）、registry.py（10 个工具）
   analysis/     chart.py（手写 SVG 出图）
 apps/web/       index.html（单文件前端）、logo.svg、logo-lockup.svg
-docs/           EXPERIMENTS.md（36 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
+docs/           EXPERIMENTS.md（37 条实验）、PLAN.md、TECH.md、DEPLOY.md、VIDEO.md
 scripts/        eval_qa.py + eval_questions.json（端到端评测：引用准确率 / 拒答正确率）
                 measure_crosslinks.py（图文互链覆盖率：多少张卡片在正文里真的被提到）
 ```
