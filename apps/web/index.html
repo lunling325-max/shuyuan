@@ -387,6 +387,16 @@ mark{
 .figcard .vcap{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-sm);font-weight:600}
 .figcard .pg{margin-left:auto;font-weight:400;font-size:var(--fs-xs);color:var(--ink-3);font-variant-numeric:tabular-nums}
 .thumb{display:block;width:100%;border:1px solid var(--hair);border-radius:7px;background:#fff}
+/* 公式比插图窄得多：按原尺寸居中放，不拉满整栏 —— 拉满既糊又白占半屏 */
+.thumb.math{width:auto;max-width:100%;margin:0 auto}
+/* 公式段落的抬头：前面是表格和插图，从这里开始换了一类东西，得有条线隔开 */
+.vsec{display:flex;align-items:center;gap:8px;margin-top:var(--sp-4);padding-top:var(--sp-3);
+  border-top:1px solid var(--hair);font-size:var(--fs-sm);font-weight:600;color:var(--ink-2)}
+.vsec .n{margin-left:auto;font-weight:400;font-size:var(--fs-xs);color:var(--ink-3);
+  font-variant-numeric:tabular-nums}
+/* 公式的文本层：等宽、可选中，但样式上就不该看着像排版源码 */
+.vtext{display:block;font-size:var(--fs-xs);color:var(--ink-3);white-space:pre-wrap;
+  word-break:break-word;padding:4px 6px;border-radius:6px;background:var(--wash)}
 .q{align-self:flex-end;background:var(--wash);border-radius:11px 11px 3px 11px;
   padding:9px var(--sp-3);font-size:var(--fs-sm);max-width:88%}
 .a{font-size:var(--fs-sm);line-height:1.6}
@@ -829,7 +839,7 @@ svg{width:100%;height:auto;display:block}
           参考文献 <span class="chip" id="ref-count">—</span>
         </button>
         <button class="tab" id="tab-visual" data-tab="visual" role="tab" aria-selected="false">
-          图表 <span class="chip" id="visual-count">—</span>
+          图表公式 <span class="chip" id="visual-count">—</span>
         </button>
         <span class="spacer"></span>
         <span class="chip" id="qa-chip" role="status" aria-live="polite">未提问</span>
@@ -2559,9 +2569,12 @@ svg{width:100%;height:auto;display:block}
   }
 
   /* 图表栏要逐页跑 find_tables()（约 0.29 秒/页），40 页上限就是十几秒。
-     所以它跟参考文献不一样：不做成打开文献就预取，而是切到这一栏才拉。 */
+     所以它跟参考文献不一样：不做成打开文献就预取，而是切到这一栏才拉。
+
+     三个端点的耗时差着三个数量级（实测同一份 541 页教材：表格 21.4 秒、
+     公式 0.012 秒）。塞进同一个 Promise.all，就是让快到的那一个陪慢的排队 ——
+     想看公式的人要先等 21 秒。所以分开走：谁先回谁先画。 */
   async function loadVisuals(paperId) {
-    state.visuals = null;
     state.visualError = '';
     // 重新解析期间先不要给入口：旧索引留着的话，正文里的编号会指向还没画出来的卡片
     state.visualIndex = new Map();
@@ -2571,16 +2584,27 @@ svg{width:100%;height:auto;display:block}
     $('visual-count').textContent = '…';
     $('visual-body').replaceChildren(el('p', { class: 'note', style: 'margin:0' },
       '正在解析表格与插图…首次约需十秒（逐页检测网格线），完成后写入磁盘，再次访问即刻可用。'));
+
+    // 三个字段各自到货，缺的那个在界面上写"正在解析"，不是留白
+    const box = { tables: null, figures: null, formulas: null };
+    state.visuals = box;
+    const stale = () => !state.paper || state.paper.id !== paperId;
+
+    api(`/papers/${paperId}/formulas`)
+      .then((report) => { if (!stale()) { box.formulas = report; renderVisuals(); } })
+      .catch((err) => { if (!stale()) { box.formulas = { error: err.message }; renderVisuals(); } });
+
     try {
       const [tables, figures] = await Promise.all([
         api(`/papers/${paperId}/tables`),
         api(`/papers/${paperId}/figures`),
       ]);
-      if (!state.paper || state.paper.id !== paperId) return;  // 期间换过文献，结果作废
-      state.visuals = { tables, figures };
+      if (stale()) return;  // 期间换过文献，结果作废
+      box.tables = tables;
+      box.figures = figures;
       renderVisuals();
     } catch (err) {
-      if (!state.paper || state.paper.id !== paperId) return;
+      if (stale()) return;
       state.visualError = err.message;
       $('visual-count').textContent = '0';
       $('visual-body').replaceChildren(el('p', { class: 'note', style: 'margin:0' },
@@ -2598,9 +2622,16 @@ svg{width:100%;height:auto;display:block}
   }
 
   function renderVisuals() {
-    const tables = state.visuals.tables.tables;
-    const figures = state.visuals.figures.figures;
-    $('visual-count').textContent = String(tables.length + figures.length);
+    const v = state.visuals;
+    if (!v) return;                          // 还没开始拉，或者已经作废
+    const tables = v.tables ? v.tables.tables : [];
+    const figures = v.figures ? v.figures.figures : [];
+    const report = v.formulas;               // null = 还没到货，{error} = 取失败
+    const formulas = report && !report.error ? report.formulas : [];
+    const pending = !v.tables || !report;
+    $('visual-count').textContent = pending
+      ? '…'
+      : String(tables.length + figures.length + formulas.length);
 
     // 正文里"Figure 9 / Table 2"要不要变成可点的，取决于这里有没有对应的卡片：
     // 编号存在但解析时没认出图注的，宁可不给入口，也不给一个点了没反应的链接
@@ -2619,16 +2650,30 @@ svg{width:100%;height:auto;display:block}
     state.mentions = buildMentions();
 
     const nodes = [];
-    // 两个端点共用同一份解析结果，note 只说一遍（"表格 4 张、插图 2 幅"）
-    if (state.visuals.tables.note) {
-      nodes.push(el('p', { class: 'note', style: 'margin:0' }, state.visuals.tables.note));
+    // 表格与插图共用同一份解析结果，note 只说一遍（"表格 4 张、插图 2 幅"）
+    if (!v.tables) {
+      nodes.push(el('p', { class: 'note', style: 'margin:0' }, '正在解析表格与插图…'));
+    } else if (v.tables.note) {
+      nodes.push(el('p', { class: 'note', style: 'margin:0' }, v.tables.note));
     }
     tables.forEach((t) => nodes.push(tableCard(t)));
     figures.forEach((f) => nodes.push(figureCard(f)));
+    if (!report) {
+      nodes.push(el('div', { class: 'vsec' },
+        el('span', {}, '公式'), el('span', { class: 'n' }, '…')));
+      nodes.push(el('p', { class: 'note', style: 'margin:0' }, '正在解析编号公式…'));
+    } else if (report.error) {
+      nodes.push(el('div', { class: 'vsec' },
+        el('span', {}, '公式'), el('span', { class: 'n' }, '—')));
+      nodes.push(el('p', { class: 'note', style: 'margin:0' }, `公式没取到：${report.error}`));
+    } else {
+      nodes.push(...formulaSection(report));
+    }
     $('visual-body').replaceChildren(...nodes);
 
-    // 有人点了正文里的编号才走到这里：解析是懒的，卡片落地后再定位
-    if (state.pendingFig) {
+    // 有人点了正文里的编号才走到这里：解析是懒的，卡片落地后再定位。
+    // 表格还没回来时卡片根本不存在，这时候闪等于把这次点击吞掉。
+    if (state.pendingFig && v.tables) {
       flashCard(state.pendingFig);
       state.pendingFig = '';
     }
@@ -2729,7 +2774,8 @@ svg{width:100%;height:auto;display:block}
   /** 正文编号 → 图表卡片。图表栏懒解析：没解析过就先解析，落地后再定位。 */
   function jumpToCard(key) {
     setSideTab('visual');
-    if (state.visuals) { flashCard(key); return; }
+    // 卡片来自表格/插图那次解析；公式先回来时卡片还不存在
+    if (state.visuals && state.visuals.tables) { flashCard(key); return; }
     state.pendingFig = key;
     if (!state.visualLoading && state.paper) loadVisuals(state.paper.id);
   }
@@ -2791,6 +2837,43 @@ svg{width:100%;height:auto;display:block}
       }),
       body ? el('p', { class: 'note', style: 'margin:0' }, body) : '',
       key ? captionRefs(key, f.page) : '');
+  }
+
+  /* 公式单独一段。表格和插图是"作者标了编号"就该有的东西，公式不是：
+     判据是版面右侧那个 `(N)`，没有编号的独立公式一律不收（宁可漏，不可乱指）。
+     所以 0 个的时候更要把原因写出来，否则看的人会以为是这一栏坏了。 */
+  function formulaSection(report) {
+    const list = report.formulas;
+    const nodes = [el('div', { class: 'vsec' },
+      el('span', {}, '公式'),
+      el('span', { class: 'n' }, `${list.length} 个`))];
+    if (report.note) {
+      nodes.push(el('p', { class: 'note', style: 'margin:0' }, report.note));
+    }
+    if (list.length) {
+      nodes.push(el('p', { class: 'note', style: 'margin:0' },
+        '公式按版面截取。下方文本层由 PDF 字符层拼出，上下标与根号是有损的，仅供检索参考。'));
+      list.forEach((f) => nodes.push(formulaCard(f)));
+    }
+    return nodes;
+  }
+
+  /** 一个编号公式：图是准的，文本层是残的 —— 两者一起给，谁也不会被误当成 LaTeX 源码。 */
+  function formulaCard(f) {
+    return el('div', { class: 'figcard', 'data-formula': String(f.index) },
+      el('div', { class: 'vcap' },
+        el('span', {}, f.label || `公式 ${f.index + 1}`),
+        el('span', { class: 'pg' }, `p.${f.page}`)),
+      el('img', {
+        class: 'thumb math', src: f.thumb, loading: 'lazy', decoding: 'async',
+        alt: f.label || '公式',
+        on: {
+          error: (e) => {
+            e.target.replaceWith(el('p', { class: 'note', style: 'margin:0' }, '该公式无法渲染'));
+          },
+        },
+      }),
+      el('code', { class: 'vtext' }, f.text));
   }
 
   /** 正文 → 参考文献。找不到就明说，不要静默什么都不发生。 */

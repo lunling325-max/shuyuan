@@ -163,6 +163,7 @@ class Paper:
     _fingerprint: set[str] | None = field(default=None, repr=False)
     _refs: list | None = field(default=None, repr=False)
     _visuals: object | None = field(default=None, repr=False)
+    _formulas: object | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
@@ -211,6 +212,21 @@ class Paper:
 
                     self._visuals = analyze(self.path)
         return self._visuals
+
+    @property
+    def formulas(self):
+        """带编号的公式（懒解析 + 进程内缓存，磁盘上还有一份）。
+
+        和图表一样是懒解析：`formulas.analyze` 要整篇走一遍 40 页，
+        上传时干等它没有意义。算完自己落盘，重启也不用再算。
+        """
+        if self._formulas is None:
+            with self._lock:
+                if self._formulas is None:
+                    from app.parsing.formulas import analyze
+
+                    self._formulas = analyze(self.path)
+        return self._formulas
 
     @property
     def text_index(self) -> TextIndex:

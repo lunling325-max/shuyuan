@@ -8,7 +8,9 @@
     uv run --with websockets python scripts/shoot.py \
         --url http://127.0.0.1:8017/#graph --out docs/screenshots/live/07-graph-live.png
     … --dark            暗色主题（模拟 prefers-color-scheme）
-    … --width 390       窄屏（同时改视口和 deviceScaleFactor）
+    … --width 390       窄屏（窄于 600px 时按移动端渲染）
+    … --scale 1.65      像素密度。文章里的插图统一按 1440×824 @1.65 拍（约 2379×1359），
+                        这样 16cm 宽的版面上字形才不会发虚
     … --js "…"          加载完再执行一段 JS（用来点节点）
     … --wait 1200       执行 JS 之后再等多少毫秒（等动画/请求落地）
     … --keys Tab,Enter  --wait 之后真的按键盘（走 CDP，事件是 trusted 的）。
@@ -129,7 +131,8 @@ def set_files(cdp: "Cdp", spec: str) -> None:
 
 
 def shoot(url: str, out: Path, width: int, height: int, dark: bool, js: str, wait: int,
-          js2: str = "", wait2: int = 0, keys: str = "", files: str = "") -> None:
+          js2: str = "", wait2: int = 0, keys: str = "", files: str = "",
+          scale: float = 1.0) -> None:
     port = 9333
     profile = tempfile.mkdtemp(prefix="shoot-")
     proc = subprocess.Popen(
@@ -141,7 +144,7 @@ def shoot(url: str, out: Path, width: int, height: int, dark: bool, js: str, wai
             "--no-first-run",
             "--no-default-browser-check",
             "--hide-scrollbars",
-            "--force-device-scale-factor=1",
+            f"--force-device-scale-factor={scale}",
             "about:blank",
         ],
         stdout=subprocess.DEVNULL,
@@ -151,7 +154,7 @@ def shoot(url: str, out: Path, width: int, height: int, dark: bool, js: str, wai
         cdp = Cdp(_wait_target(port))
         cdp.call("Page.enable")
         cdp.call("Emulation.setDeviceMetricsOverride",
-                 width=width, height=height, deviceScaleFactor=1, mobile=width < 600)
+                 width=width, height=height, deviceScaleFactor=scale, mobile=width < 600)
         # 两样都做：模拟媒体查询对"跟随系统的样式"有效，而这个应用的主题
         # 是 `<html data-theme>` 上的一个属性（存在 localStorage 里），
         # 只看媒体查询会拍出一张"自称暗色、其实是浅色"的图。
@@ -218,6 +221,8 @@ def main() -> int:
     ap.add_argument("--width", type=int, default=1440)
     ap.add_argument("--height", type=int, default=960)
     ap.add_argument("--dark", action="store_true")
+    ap.add_argument("--scale", type=float, default=1.0,
+                    help="像素密度；文章插图统一用 1.65（1440×824 → 2379×1359）")
     ap.add_argument("--js", default="")
     ap.add_argument("--wait", type=int, default=700)
     ap.add_argument("--js2", default="", help="--wait 之后再执行一段，用来读第一段执行后的状态")
@@ -227,7 +232,7 @@ def main() -> int:
                     help="往文件输入框塞文件：'选择器:路径'，多个用 ; 隔开（如 --files \"#upload-input:pdf/a.pdf\"）")
     a = ap.parse_args()
     shoot(a.url, Path(a.out), a.width, a.height, a.dark, a.js, a.wait, a.js2, a.wait2, a.keys,
-          a.files)
+          a.files, a.scale)
     return 0
 
 

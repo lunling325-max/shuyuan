@@ -565,6 +565,7 @@ from app.api.routers import stream as stream_routes  # noqa: E402
 from app.api.routers import tools as tool_routes  # noqa: E402
 from app.api.routers import translate as translate_routes  # noqa: E402
 from app.api.routers import visuals as visual_routes  # noqa: E402
+from app.api.routers import formulas as formula_routes  # noqa: E402
 
 app.include_router(tool_routes.router)
 app.include_router(recommend_routes.router)
@@ -574,6 +575,7 @@ app.include_router(dataviz_routes.router)
 app.include_router(stream_routes.router)
 app.include_router(translate_routes.router)
 app.include_router(visual_routes.router)
+app.include_router(formula_routes.router)
 # 跨文献对比：同一个问题分别去两到三篇里取证据，逐条锚回各自的原文
 app.include_router(cross_routes.router)
 

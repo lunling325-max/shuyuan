@@ -90,6 +90,7 @@ apps/api/app/
                frontmatter.py  首页的作者与机构：只认版面，认不出就留空
                scan.py         扫描件 OCR（RapidOCR）：判扫描页、读序还原、磁盘缓存
                visuals.py      表格与插图：按行×列还原单元格、抓图注、缩略图重渲染
+               formulas.py     带编号的公式：页码、编号、包围盒、明说有损的文本层
   retrieval/   bm25.py         词法检索 + 单复数归并 + RRF 融合
                embeddings.py   BGE 的 ONNX 推理（不引 torch）
                dense.py        向量检索（可选通道，见 E-004）
@@ -135,6 +136,8 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 | GET | `/api/papers/{id}/tables` | 表格结构化：行×列单元格、标题、Markdown；首次解析逐页找网格线（约 0.29 秒/页，前 40 页），之后走磁盘缓存 |
 | GET | `/api/papers/{id}/figures` | 插图清单：页码、坐标框、图注、原始像素尺寸，`thumb` 指向缩略图 |
 | GET | `/api/papers/{id}/figures/{i}.png` | 按版面重渲染的缩略图（不是原图：原图可能是 CMYK 或 4000px 宽） |
+| GET | `/api/papers/{id}/formulas` | 带编号的公式：页码、编号、包围盒、`note`（0 个时说清为什么）、一段明说有损的文本层 |
+| GET | `/api/papers/{id}/formulas/{i}.png` | 按包围盒裁的公式图（200 dpi，公式字号只有正文一半，110 dpi 会糊） |
 | POST | `/api/papers/{id}/qa` | 问答，返回结论 + 锚点 + 守卫统计 |
 | POST | `/api/papers/{id}/qa/stream` | 同一链路的 SSE 版本：`meta → queries → evidence → token* → claims → done`，失败只发 `error` 不发 `done` |
 | GET | `/api/papers/{id}/bilingual?chunk=N` | 某个块的中英逐段对照；大模型不可用或段数不符时 `degraded=true`，原文照常返回 |
@@ -170,13 +173,13 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 ## 测试
 
 ```bash
-cd apps/api && uv run pytest -q     # 505 项
+cd apps/api && uv run pytest -q     # 524 项
 ```
 
 其中一部分用例要读真实的演示论文（`pdf/` 不进仓库，见 `.gitignore`，7 份约 43 MB；
 用例按文件名找，需要哪几个写在各测试模块顶部的路径常量里）。
 没有这些文件时它们会 **skip 并写明缺哪个文件**，不会整片变红：从零 clone 下来实测
-`195 passed, 310 skipped`；把 PDF 放进仓库根的 `pdf/` 之后是 `505 passed`。
+`195 passed, 329 skipped`；把 PDF 放进仓库根的 `pdf/` 之后是 `524 passed`。
 
 覆盖：切块的边界条件、BM25 排序与单复数归并、RRF 去重、守卫的三级匹配、
 Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资料库恢复、
@@ -212,6 +215,10 @@ Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资
   面积过小的是图标、整页大小的是扫描位图，两头都不要、
   目录页被误认成 32×3 的表要挡掉、扫描件如实说"提不出来"而不是猜一张网格、
   缓存坏了重新解析、缩略图必须是 PNG 字节而不是一段 200 的 JSON。
+- **公式块**：只认右边缘那个 `(N)`（无编号的居中公式会把表格里的 `6.0 × 10−4` 认成公式）、
+  两栏页面不许串栏、求和的上下限与分式的分子分母要接进框里、数学字体占比不许算出 1.15、
+  没有编号公式的论文说"没有找到"而不是"解析失败"、扫描件说"提不出"、
+  裁图必须是 PNG 字节、越界索引 404 且说清共有几个。
 
 ## 实验记录
 
@@ -247,8 +254,8 @@ E-038 之后界面是十二个视图（新增「跨文献对比」）。
 
 | 文件 | 内容 |
 |---|---|
-| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 13 张实机截图与创新点说明（PDF 25 页，`build/TECH.pdf`） |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 40 篇实验记录（E-001–E-040），每条结论带实测数字 |
+| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 14 张实机截图与创新点说明（PDF 27 页，`build/TECH.pdf`） |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 41 篇实验记录（E-001–E-041），每条带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑与对策） |
 | [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：时间轴、逐段口播、翻车预案；录屏成品 `build/shuyuan-demo.mp4`（6 分 26 秒） |
