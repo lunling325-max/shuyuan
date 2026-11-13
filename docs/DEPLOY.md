@@ -150,6 +150,37 @@ docker compose down               # 停掉（数据保留在 ./data）
 docker stats                      # 看内存/CPU 占用
 ```
 
+### 7.1 重新部署前先打一个回滚标签
+
+`docker compose up -d --build` 会**覆盖** `research-agent-api:local` 这个标签。
+构建成功但新容器起不来时，旧镜像就只剩构建缓存里那一份了。所以重建之前先留一份：
+
+```bash
+docker tag research-agent-api:local research-agent-api:prev-$(date +%Y%m%d)
+```
+
+回滚（30 秒，数据不动）：
+
+```bash
+docker tag research-agent-api:prev-20261113 research-agent-api:local
+docker compose up -d --no-build --force-recreate api
+curl -fsS http://127.0.0.1:8017/api/health
+```
+
+> 2026-11-13 已为线上打过 `research-agent-api:prev-20261113`（上线于 11-11 的那一版）。
+
+### 7.2 arXiv 追踪的定时器
+
+服务里有一个后台任务，每 60 秒看一眼有没有**到期的**订阅（`app/tracking.py`）。
+它只读写 `./data/tracking.json`，没有订阅时是空转。要关掉：
+
+```
+PAPER_TRACKING_SCHEDULER=0
+```
+
+写在 `.env` 里，然后 `--force-recreate`（`restart` 不重读 env_file）。
+单测里默认关着 —— 测试进程不该因为有人建了一条订阅就去连 arXiv。
+
 ## 8. 已知限制与对策
 
 | 现象 | 原因 | 对策 |
@@ -159,6 +190,7 @@ docker stats                      # 看内存/CPU 占用
 | 扫描件第一次识别很慢 | RapidOCR 是 CPU 推理，实测单页 13–27 秒 | 演示前先把要用的扫描件跑一遍，结果会落盘缓存，现场就是秒开 |
 | 向量检索不可用 | 镜像里不带 `models/bge-small-en-v1.5`（128 MB，未入库） | 默认走纯词法 BM25，够用；确实要用就把模型放到 `./models/` 并解开 compose 里那行注释 |
 | 首屏 3 秒以上才打开 | 首次访问要加载前端与建索引 | 演示前先访问一次预热 |
+| 「订阅追踪」点「立即抓取」要等十几秒 | 一次性向 arXiv 拉 40 条（约 100 KB），服务器到 arXiv 实测 13 KB/s 上下 | 属正常：按钮上带秒表，超过 90 秒会放弃并说明原因，订阅不受影响 |
 | 公网流量被刷 | 20 GiB 免费额度，PDF 每篇 2–3 MB | 结束后删掉安全组里 8017 那条规则 |
 
 ## 9. 省钱 / 省额度
