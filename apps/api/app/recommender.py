@@ -15,6 +15,11 @@
 自由发挥，就会写出"这篇论文提出了全新的架构"这种原文里根本没有的断言。这里每一条
 理由都能追到一个具体数字：重合了几篇、哪几篇、代码地址原文是哪个、几天前提交的。
 
+**口味（点赞记录）是乘法项，不是第四项加法**：`score × (1 + 0.15 × 口味匹配)`。
+加法会稀释相关性 —— 相关性是"和你的库像不像"，它是这个系统的主线；口味只该在
+同一条水平线上分先后。点赞不足两篇时口味恒为 0（点一次就把排序带偏，那不叫个性化，
+那叫过拟合）。
+
 **打分权重是手调的，不是学出来的**：`0.75×相关性 + 0.20×有代码 + 0.05×新鲜度`。
 相关性用 0.5 做归一化上限（实测词面余弦很少超过 0.5），这样它仍是决定性的那一项，
 代码和新鲜度只用来在同一条水平线上分先后 —— 正好对应赛题"优先推荐易复现的"。
@@ -39,6 +44,11 @@ RELEVANCE_CAP = 0.5
 W_RELEVANCE = 0.75
 W_CODE = 0.20
 W_FRESH = 0.05
+# 口味是乘上去的（见模块说明）：最多把总分抬高 15%，足以在同分时换个先后，
+# 不足以把一篇和库毫无关系的论文顶到第一篇。
+W_TASTE = 0.15
+# 少于这么多篇点赞，就不认为"这个人的口味"已经成形
+MIN_TASTE_VOTES = 2
 
 STOPWORDS = frozenset(
     """
@@ -161,6 +171,7 @@ def rank(
     *,
     today: str = "",
     limit: int = 12,
+    taste: "Taste | None" = None,
 ) -> list[Recommendation]:
     """给每篇候选论文算分、配理由，按分数从高到低返回。
 
@@ -183,11 +194,13 @@ def rank(
         code_url = extract_code_url(entry.abstract, entry.comment)
         fresh, fresh_note = _freshness(entry.published, today)
 
-        score = (
+        base = (
             W_RELEVANCE * min(1.0, relevance / RELEVANCE_CAP)
             + W_CODE * (1.0 if code_url else 0.0)
             + W_FRESH * fresh
         )
+        taste_hit = taste.score(tokens) if taste is not None else 0.0
+        score = base * (1.0 + W_TASTE * taste_hit)
 
         reasons: list[str] = []
         if matches:
@@ -203,6 +216,8 @@ def rank(
             reasons.append(f"摘要或备注中给出了开源代码 {code_url}")
         if fresh_note:
             reasons.append(fresh_note)
+        if taste_hit >= 0.05:
+            reasons.append(f"与你点赞过的 {taste.size} 篇口味匹配 {taste_hit:.2f}")
 
         results.append(
             Recommendation(
@@ -222,12 +237,53 @@ def rank(
 # ---------------------------------------------------------------- 点赞 / 踩
 
 
+@dataclass(frozen=True, slots=True)
+class Taste:
+    """一个人的口味画像：点赞过的**标题**切出来的词。
+
+    为什么用标题而不是摘要：投票那一刻手上只有标题（前端就传了这个）。
+    标题里通常正好是"这件事叫什么"（retrieval augmentation / diffusion model），
+    拿它做画像够用，也不至于为了个性化再回头去抓一遍全文。
+    """
+
+    liked: frozenset[str] = frozenset()
+    disliked: frozenset[str] = frozenset()
+    size: int = 0
+
+    def score(self, tokens: frozenset[str]) -> float:
+        """0~1 的口味匹配度：像点赞过的，减去像踩过的。"""
+        if not tokens or not self.liked:
+            return 0.0
+        hit = similarity(tokens, self.liked)
+        if self.disliked:
+            # 不扣成负数：一次误点的代价不该是"这一篇永远排最后"，
+            # 只把"像点赞过"和"像踩过"两边相减
+            hit = max(0.0, hit - similarity(tokens, self.disliked))
+        return hit
+
+
+def build_taste(up_titles: list[str], down_titles: list[str]) -> Taste | None:
+    """点赞够数才给口味。一篇就够的话，第一次误点就能把整个推荐页带偏。"""
+    if len(up_titles) < MIN_TASTE_VOTES:
+        return None
+    return Taste(
+        liked=keywords(" ".join(up_titles)),
+        disliked=keywords(" ".join(down_titles)) if down_titles else frozenset(),
+        size=len(up_titles),
+    )
+
+
 class FeedbackStore:
-    """点赞/踩的落盘存储：`{arxiv_id: {user: "up"|"down"}}`。
+    """点赞/踩的落盘存储：`{"votes": {arxiv_id: {user: "up"|"down"}}, "titles": {...}}`。
 
     为什么按用户分开存而不是只存计数：赛题要求"多用户推荐算法拓展"，
-    只留一个总数就没法做"这个人喜欢的别人不一定喜欢"。现在按 user 存，
-    以后换算法只需要读这份原始投票，不用改存储。
+    只留一个总数就没法做"这个人喜欢的别人不一定喜欢"。
+
+    为什么还要存标题：点赞本身没有用 —— 有用的是"这些被点赞的论文在讲什么"。
+    标题在投票那一刻就有，顺手记下来，之后就不用为了算口味再出网抓一次。
+
+    老格式（`{arxiv_id: {user: vote}}`，没有外层 `votes`）读进来时自动按老格式解释，
+    下次写盘就升级成新格式 —— 比赛前改存储格式，不能让上一版留下的文件读不出来。
 
     写盘用"临时文件 + 原子替换"：边演示边点赞的时候进程被杀，
     也不该留下一个半截 JSON 让下次启动直接崩。
@@ -237,30 +293,49 @@ class FeedbackStore:
         self.path = Path(path)
         self._lock = threading.Lock()
 
-    def _read(self) -> dict[str, dict[str, str]]:
+    def _read(self) -> tuple[dict[str, dict[str, str]], dict[str, str]]:
+        """返回 (投票, 标题)。读不出来就是两个空表。"""
         if not self.path.exists():
-            return {}
+            return {}, {}
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return {}
-        return data if isinstance(data, dict) else {}
+            return {}, {}
+        if not isinstance(data, dict):
+            return {}, {}
+        if "votes" in data:                      # 新格式
+            votes = data.get("votes") or {}
+            titles = data.get("titles") or {}
+            return (
+                {str(k): {str(u): str(v) for u, v in (bucket or {}).items()}
+                 for k, bucket in votes.items() if isinstance(bucket, dict)},
+                {str(k): str(v) for k, v in titles.items()},
+            )
+        # 老格式：整个文件就是 votes
+        return (
+            {str(k): {str(u): str(v) for u, v in (bucket or {}).items()}
+             for k, bucket in data.items() if isinstance(bucket, dict)},
+            {},
+        )
 
-    def _write(self, data: dict[str, dict[str, str]]) -> None:
+    def _write(self, votes: dict[str, dict[str, str]], titles: dict[str, str]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload = {"version": 2, "votes": votes, "titles": titles}
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, self.path)
 
     def counts(self, arxiv_id: str, user: str = "") -> tuple[int, int, str]:
         """返回 (赞, 踩, 我投的那一票)。"""
         user = user or "local"
-        votes = self._read().get(arxiv_id) or {}
+        votes = self._read()[0].get(arxiv_id) or {}
         up = sum(1 for v in votes.values() if v == "up")
         down = sum(1 for v in votes.values() if v == "down")
         return up, down, votes.get(user, "")
 
-    def cast(self, arxiv_id: str, user: str, vote: str) -> tuple[int, int, str]:
+    def cast(
+        self, arxiv_id: str, user: str, vote: str, title: str = ""
+    ) -> tuple[int, int, str]:
         """投票。`vote` 为空 = 取消之前那一票。
 
         同一个人再点同一个按钮就是取消：没有这个反悔入口，一次误点会把
@@ -272,16 +347,27 @@ class FeedbackStore:
         # 读回来的时候找不到自己那一票，界面上按钮永远不亮
         user = user or "local"
         with self._lock:
-            data = self._read()
-            bucket = data.setdefault(arxiv_id, {})
+            votes, titles = self._read()
+            bucket = votes.setdefault(arxiv_id, {})
             if vote:
                 bucket[user] = vote
             else:
                 bucket.pop(user, None)
             if not bucket:
-                data.pop(arxiv_id, None)
-            self._write(data)
+                votes.pop(arxiv_id, None)
+            clean = " ".join((title or "").split())
+            if clean:
+                titles[arxiv_id] = clean[:300]
+            self._write(votes, titles)
         return self.counts(arxiv_id, user)
+
+    def taste(self, user: str = "") -> Taste | None:
+        """这个人的口味；点赞不足 MIN_TASTE_VOTES 篇时返回 None（不参与排序）。"""
+        user = user or "local"
+        votes, titles = self._read()
+        up = [titles.get(pid, "") for pid, bucket in votes.items() if bucket.get(user) == "up"]
+        down = [titles.get(pid, "") for pid, bucket in votes.items() if bucket.get(user) == "down"]
+        return build_taste([t for t in up if t], [t for t in down if t])
 
 
 def cache_path(base: Path) -> Path:

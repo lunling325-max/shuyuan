@@ -4813,6 +4813,9 @@ svg{width:100%;height:auto;display:block}
     // 这次刷新失败但手里有旧批次时不能说"缓存"：用户要的是"这批是旧的"
     if (data.degraded) parts.push('本次未获取到新论文');
     else if (data.cached) parts.push('缓存（15 分钟内不重复出网）');
+    // 口味画像：说清"用上了没有、用了几篇"，别让人以为点过的赞石沉大海
+    if (data.taste_size > 0) parts.push(`已按 ${data.taste_size} 篇点赞调整排序`);
+    else parts.push('点赞满 2 篇后开始按口味排序');
     $('rec-state').textContent = parts.join(' · ');
     $('rec-out').replaceChildren(renderRecommendBody(data));
   }
@@ -4885,7 +4888,9 @@ svg{width:100%;height:auto;display:block}
       const data = await api('/recommend/vote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ arxiv_id: r.arxiv_id, vote: next }),
+        // 标题一起带上：点赞记录要能回答"这些被点赞的论文在讲什么"，
+        // 只留一串 id 的话，口味画像得再出网抓一遍才知道它们是什么
+        body: JSON.stringify({ arxiv_id: r.arxiv_id, vote: next, title: r.title }),
       });
       r.votes_up = data.votes_up;
       r.votes_down = data.votes_down;

@@ -68,6 +68,8 @@ class RecommendItemOut(BaseModel):
 class RecommendOut(BaseModel):
     categories: list[str] = Field(default_factory=list)
     days: int = 7
+    # 口味画像用了多少篇点赞；0 表示还没成形（不足两篇就不参与排序）
+    taste_size: int = 0
     items: list[RecommendItemOut] = Field(default_factory=list)
     degraded: bool = False
     note: str = ""
@@ -79,6 +81,8 @@ class VoteRequest(BaseModel):
     arxiv_id: str
     vote: str = "up"          # up / down / 空串=取消
     user: str = "local"
+    # 标题：点赞记录要能回答"这些被点赞的论文在讲什么"，没标题就只是一串 id
+    title: str = ""
 
 
 class VoteOut(BaseModel):
@@ -181,7 +185,12 @@ def recommend(
     ]
 
     profile = recommender.build_profile(deps.registry.all())
-    ranked = recommender.rank(entries, profile, today=date.today().isoformat(), limit=limit)
+    # 口味只在"这个人的点赞已经成形"时才参与排序（见 recommender.MIN_TASTE_VOTES），
+    # 没成形就是 None —— 不拿一次点击去猜一个人
+    taste = _feedback.taste(user)
+    ranked = recommender.rank(
+        entries, profile, today=date.today().isoformat(), limit=limit, taste=taste
+    )
 
     items: list[RecommendItemOut] = []
     for rec in ranked:
@@ -215,6 +224,7 @@ def recommend(
     return RecommendOut(
         categories=cats or ["cs.CL", "cs.LG", "cs.AI", "cs.CV"],
         days=days,
+        taste_size=taste.size if taste is not None else 0,
         items=items,
         # degraded 说的是"这次刷新失败"，不是"这批数据不好"
         degraded=bool(failure),
@@ -241,7 +251,7 @@ def vote(req: VoteRequest) -> VoteOut:
     except arxiv_tool.InvalidArxivId as exc:
         raise HTTPException(400, str(exc)) from exc
     try:
-        up, down, mine = _feedback.cast(arxiv_id, req.user, req.vote)
+        up, down, mine = _feedback.cast(arxiv_id, req.user, req.vote, req.title)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return VoteOut(arxiv_id=arxiv_id, votes_up=up, votes_down=down, my_vote=mine)

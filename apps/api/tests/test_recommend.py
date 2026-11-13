@@ -18,6 +18,7 @@ from app import recommender
 from app.recommender import (
     FeedbackStore,
     LibraryPaper,
+    build_taste,
     extract_code_url,
     keywords,
     rank,
@@ -157,6 +158,88 @@ def test_feedback_store_rejects_unknown_vote(tmp_path):
         FeedbackStore(tmp_path / "f.json").cast("1706.03762", "me", "meh")
 
 
+# ---------------------------------------------------------------- 口味（多用户）
+
+def test_taste_needs_two_up_votes_before_it_counts(tmp_path):
+    """点一次不算口味。一次点击就改排序，那不叫个性化，叫过拟合。"""
+    store = FeedbackStore(tmp_path / "feedback.json")
+    store.cast("2601.00001", "alice", "up", title="Retrieval Augmented Generation")
+    assert store.taste("alice") is None
+
+    store.cast("2601.00002", "alice", "up", title="Retrieval Augmented Retrieval")
+    taste = store.taste("alice")
+    assert taste is not None and taste.size == 2
+    assert "retrieval" in taste.liked
+
+    # 取消一票就退回"还没成形"
+    store.cast("2601.00002", "alice", "")
+    assert store.taste("alice") is None
+
+
+def test_taste_is_per_user(tmp_path):
+    store = FeedbackStore(tmp_path / "feedback.json")
+    store.cast("2601.00001", "alice", "up", title="Retrieval Augmented Generation")
+    store.cast("2601.00002", "alice", "up", title="Retrieval Augmented Retrieval")
+    assert store.taste("bob") is None          # bob 一票没投，不该沾光
+    assert store.taste("") is None             # 默认那个用户也没投
+
+
+def test_downvotes_nudge_the_taste_score_down_without_going_negative(tmp_path):
+    """"像踩过的"只能把匹配度压到 0，不能压成负数 —— 否则一次误点的代价是永远垫底。"""
+    from app.recommender import build_taste
+
+    taste = build_taste(
+        ["Retrieval Augmented Generation", "Retrieval Augmented Retrieval"],
+        ["Retrieval Augmented Retrieval Augmented Retrieval"],
+    )
+    assert taste is not None
+    same = keywords("retrieval augmented")
+    assert 0.0 <= taste.score(same) <= 1.0
+    assert taste.score(keywords("protein folding cryo em")) == 0.0
+
+
+def test_taste_promotes_a_match_but_only_by_a_bounded_factor():
+    """口味是乘法项：能把同分的前后换个位置，不能把无关的顶到第一篇。"""
+    taste = build_taste(
+        ["Retrieval Augmented Generation", "Retrieval Augmented Ranking"],
+        [],
+    )
+    entries = [
+        _entry("2601.00001", "Self Attention for Long Documents",
+               "self attention transformer encoder long documents"),
+        _entry("2601.00002", "Retrieval Augmented Generation for Science",
+               "retrieval augmented generation scientific retrieval"),
+    ]
+    plain = rank(entries, LIBRARY, today=TODAY, limit=2)
+    with_taste = rank(entries, LIBRARY, today=TODAY, limit=2, taste=taste)
+
+    # 相关性那一条本来就该靠前，口味不该反过来改变它
+    assert plain[0].entry.arxiv_id == "2601.00001"
+    assert with_taste[0].entry.arxiv_id == "2601.00001"
+    by_id = {r.entry.arxiv_id: r for r in with_taste}
+    base = {r.entry.arxiv_id: r for r in plain}
+    lifted = by_id["2601.00002"].score / base["2601.00002"].score
+    assert 1.0 < lifted <= 1.0 + 0.15 + 1e-9
+    assert "口味匹配" in by_id["2601.00002"].reason
+    assert "口味匹配" not in by_id["2601.00001"].reason
+
+
+def test_old_feedback_file_without_votes_key_still_reads(tmp_path):
+    """改存储格式那天之前投的票不能丢：老格式（整个文件就是 votes）照样读得出来。"""
+    import json
+
+    path = tmp_path / "feedback.json"
+    path.write_text(json.dumps({"1706.03762": {"alice": "up"}}), encoding="utf-8")
+    store = FeedbackStore(path)
+    assert store.counts("1706.03762", "alice") == (1, 0, "up")
+    # 下一次写盘就升级成新格式，并且老票还在
+    store.cast("1706.03762", "bob", "up", title="Attention Is All You Need")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["version"] == 2
+    assert payload["votes"]["1706.03762"] == {"alice": "up", "bob": "up"}
+    assert payload["titles"]["1706.03762"] == "Attention Is All You Need"
+
+
 def test_empty_user_means_this_machine_and_reads_back_its_own_vote(tmp_path):
     """`user=""` 曾经写进 "local" 却按 "" 读回来，于是按钮永远不亮。
 
@@ -248,6 +331,58 @@ def test_vote_endpoint_round_trip(client):
     cancel = client.post("/api/recommend/vote",
                          json={"arxiv_id": "1706.03762", "vote": ""}).json()
     assert cancel["votes_up"] == 0 and cancel["my_vote"] == ""
+
+
+def test_votes_shape_the_next_recommendation_and_say_so(client, monkeypatch):
+    """多用户推荐：投过的票要能改变下一次排序，并且在理由里说出来。
+
+    没有这一段，点赞就是个只会计数的按钮 —— 用户投完看不出任何变化，
+    按钮就变成了装饰。
+    """
+    from app.api.routers import recommend as recommend_routes
+    from app.tools import arxiv as arxiv_tool
+
+    for arxiv_id, title in (
+        ("2600.00001", "Retrieval Augmented Generation"),
+        ("2600.00002", "Retrieval Augmented Ranking"),
+    ):
+        client.post("/api/recommend/vote",
+                    json={"arxiv_id": arxiv_id, "vote": "up", "title": title})
+
+    feed = arxiv_tool.SearchResult(
+        query="cat:cs.CL",
+        results=[
+            _entry("2601.00020", "Protein Folding", "cryo em structure prediction"),
+            _entry("2601.00021", "Retrieval Augmented Question Answering",
+                   "retrieval augmented generation for open questions"),
+        ],
+        degraded=False,
+    )
+    monkeypatch.setattr(recommend_routes.arxiv_tool, "latest", lambda *a, **k: feed)
+
+    body = client.get("/api/recommend", params={"categories": "cs.CL"}).json()
+    assert body["taste_size"] == 2
+    assert body["items"][0]["arxiv_id"] == "2601.00021"
+    assert "口味匹配" in body["items"][0]["reason"]
+    # 完全不沾边的那个不该被硬塞一句口味
+    assert "口味匹配" not in body["items"][-1]["reason"]
+
+
+def test_without_enough_votes_taste_size_is_zero(client, monkeypatch):
+    from app.api.routers import recommend as recommend_routes
+    from app.tools import arxiv as arxiv_tool
+
+    client.post("/api/recommend/vote",
+                json={"arxiv_id": "2600.00001", "vote": "up", "title": "Retrieval Augmented"})
+    feed = arxiv_tool.SearchResult(
+        query="cat:cs.CL",
+        results=[_entry("2601.00020", "Retrieval Augmented QA", "retrieval augmented")],
+        degraded=False,
+    )
+    monkeypatch.setattr(recommend_routes.arxiv_tool, "latest", lambda *a, **k: feed)
+    body = client.get("/api/recommend", params={"categories": "cs.CL"}).json()
+    assert body["taste_size"] == 0
+    assert "口味" not in body["items"][0]["reason"]
 
 
 def test_vote_endpoint_rejects_bad_input(client):
