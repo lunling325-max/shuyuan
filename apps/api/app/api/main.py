@@ -77,10 +77,33 @@ ROOT = Path(__file__).resolve().parents[4]
 
 load_dotenv(ROOT / ".env")
 
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """起服务时把 arXiv 追踪的定时器拉起来，退出时收掉。
+
+    放在 lifespan 里而不是模块顶层：测试用 `TestClient(app)` 且不进上下文时
+    根本不会触发它，单测也就不会因为有人建了一条订阅就去连 arXiv。
+    `PAPER_TRACKING_SCHEDULER=0` 可以再关一道。
+    """
+    from app import tracking
+    from app.api.routers import tracking as tracking_routes
+
+    task = tracking.start_scheduler(tracking_routes.STORE)
+    try:
+        yield
+    finally:
+        if task is not None:
+            tracking.stop_scheduler()
+
+
 app = FastAPI(
     title="科研助手 Agent API",
     version="0.1.0",
     description="每句话都能点回原文精确位置的版本感知科研 Agent",
+    lifespan=_lifespan,
 )
 
 # 前端开发时跑在 3000/5173，生产由本服务直接托管静态文件，同源无需 CORS
@@ -566,6 +589,7 @@ from app.api.routers import tools as tool_routes  # noqa: E402
 from app.api.routers import translate as translate_routes  # noqa: E402
 from app.api.routers import visuals as visual_routes  # noqa: E402
 from app.api.routers import formulas as formula_routes  # noqa: E402
+from app.api.routers import tracking as tracking_routes  # noqa: E402
 
 app.include_router(tool_routes.router)
 app.include_router(recommend_routes.router)
@@ -576,6 +600,7 @@ app.include_router(stream_routes.router)
 app.include_router(translate_routes.router)
 app.include_router(visual_routes.router)
 app.include_router(formula_routes.router)
+app.include_router(tracking_routes.router)
 # 跨文献对比：同一个问题分别去两到三篇里取证据，逐条锚回各自的原文
 app.include_router(cross_routes.router)
 

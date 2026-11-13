@@ -147,6 +147,7 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 | POST | `/api/review` | 综述 + Future Work：多查询扩展召回，参考文献表与目录页永不进证据 |
 | GET | `/api/recommend` | arXiv 最新提交 × 本地库相关性 × 开源代码的推荐，带逐条推荐理由；`?fresh=true` 绕过 15 分钟缓存 |
 | POST | `/api/recommend/vote` | 点赞/踩（再投同一票=取消），按用户分开落盘 |
+| GET / POST | `/api/tracking` | arXiv 订阅：列表 / 新建（关键词 + 分类 + 间隔）；`/{id}/run` 立即抓取、`/run` 跑到期的、`/ack` 标记已读 |
 | GET | `/api/tools/search` | 多来源检索：arXiv / OpenAlex / Crossref / Semantic Scholar / Zenodo 并发查、跨站去重，每站各自 `degraded`，`?sources=` 选站；每条带 `citations` 与 `citations_source`（0 = 这个站没给数，不是没人引） |
 | GET | `/api/tools/arxiv/search` | 只查 arXiv（断网时 `degraded=true`，不报 500） |
 | POST | `/api/tools/arxiv/ingest` | 检索结果直接入库：下载 → 解析 → 去重 |
@@ -215,6 +216,9 @@ Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资
   面积过小的是图标、整页大小的是扫描位图，两头都不要、
   目录页被误认成 32×3 的表要挡掉、扫描件如实说"提不出来"而不是猜一张网格、
   缓存坏了重新解析、缩略图必须是 PNG 字节而不是一段 200 的 JSON。
+- **定期追踪**：首轮算基线不算新增、同一批再抓一次必须报 0、关键词"至少两个词"、
+  抓取失败也要推进 `last_run_at`（否则每分钟重试）、同一时刻只许一个抓取、
+  订阅表读坏了另存 `.bad` 而不是静默清空、GET 不改状态（连读两次徽标不变）。
 - **公式块**：只认右边缘那个 `(N)`（无编号的居中公式会把表格里的 `6.0 × 10−4` 认成公式）、
   两栏页面不许串栏、求和的上下限与分式的分子分母要接进框里、数学字体占比不许算出 1.15、
   没有编号公式的论文说"没有找到"而不是"解析失败"、扫描件说"提不出"、
@@ -254,8 +258,8 @@ E-038 之后界面是十二个视图（新增「跨文献对比」）。
 
 | 文件 | 内容 |
 |---|---|
-| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 14 张实机截图与创新点说明（PDF 27 页，`build/TECH.pdf`） |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 41 篇实验记录（E-001–E-041），每条带实测数字 |
+| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 15 张实机截图与创新点说明（PDF 28 页，`build/TECH.pdf`） |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 42 篇实验记录（E-001–E-042），每条带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑与对策） |
 | [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：时间轴、逐段口播、翻车预案；录屏成品 `build/shuyuan-demo.mp4`（6 分 26 秒） |

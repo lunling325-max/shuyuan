@@ -1072,6 +1072,34 @@ svg{width:100%;height:auto;display:block}
       <span class="sub" id="rec-state" style="margin:0"></span>
       <div id="rec-out" style="margin-top:14px"></div>
     </div>
+
+    <!-- 订阅追踪：跟上面的「每日推荐」是同一批 arXiv 数据，但**有记忆** ——
+         推荐每次现算，追踪记得哪些已经见过，所以"新增"才是个能验的数字 -->
+    <div class="card col" style="margin-top:14px">
+      <h1 style="font-size:var(--fs-lg)">订阅追踪：只报没见过的新论文</h1>
+      <p class="sub">按关键词＋分类定时抓 arXiv 新投稿；已见集合落盘，重启不重来。
+        第一轮是基线（不记为新增），之后每一轮只报没见过的那几条</p>
+      <div class="bar" style="margin-bottom:var(--sp-2)">
+        <div class="composer" style="flex:1">
+          <input id="trk-q" aria-label="追踪关键词"
+                 placeholder="追踪关键词（英文，多个词时至少命中两个），示例：retrieval augmented generation">
+        </div>
+        <label class="pick">每
+          <select id="trk-interval" aria-label="抓取间隔">
+            <option value="60">1 小时</option>
+            <option value="360" selected>6 小时</option>
+            <option value="720">12 小时</option>
+            <option value="1440">24 小时</option>
+          </select> 抓一次
+        </label>
+        <button class="btn primary" id="trk-add" type="button">添加追踪</button>
+        <button class="btn" id="trk-run-due" type="button" title="只跑到期的那些（按每条自己的间隔算）">抓取到期的</button>
+      </div>
+      <span class="sub" id="trk-state" role="status" aria-live="polite" style="margin:0"></span>
+      <div id="trk-out" style="margin-top:14px">
+        <p class="note" style="margin:0">切到本页后自动读取订阅；还没有订阅时，在上面的输入框里写一个关键词即可。</p>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -4871,6 +4899,290 @@ svg{width:100%;height:auto;display:block}
     }
   }
 
+  /* ---------------------------------------------------------------- 订阅追踪
+
+     和上面的「每日推荐」用同一批 arXiv 数据，区别只有一条：**这里记得看过什么**。
+     所以界面上能出现"新增 2 条"这种说法，而推荐页永远只会说"12 篇"。
+
+     三个约定：
+     - 首轮是基线，条目照列但新增记 0（后端算好的，前端原样显示）；
+     - GET 不改状态：徽标的真值来自后端（上次看过之后抓到的条目）。这一屏画完
+       之后才发 `/tracking/ack` 把"看过了"推上去 —— 塞进 GET 里会让刷新两次就丢徽标；
+     - 抓取失败不是错误：后端返回 200 + degraded，状态行写原因，订阅一条不少。
+  */
+  const TRK = { data: null, loading: false };
+
+  // 抓一次要真出网（服务器 → arXiv 约 13KB/s，40 条约 100KB），20 秒上下是常态
+  const TRACK_TIMEOUT_MS = 90000;
+
+  async function loadTracking() {
+    if (TRK.loading) return;
+    TRK.loading = true;
+    $('trk-state').textContent = TRK.data ? '正在刷新订阅…' : '正在读取订阅…';
+    try {
+      const data = await api('/tracking');
+      TRK.data = data;
+      renderTracking();
+      // 画完再标记已读：这一屏已经把"新增"展示出来了，下一次进来才是干净的
+      const ids = data.tracks.filter((t) => t.new_count > 0).map((t) => t.id);
+      if (ids.length) {
+        api('/tracking/ack', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+        }).catch(() => {});   // 标记失败不影响这一屏
+      }
+    } catch (err) {
+      $('trk-state').textContent = `订阅没取到：${err.message}`;
+      $('trk-out').replaceChildren(el('p', { class: 'note', style: 'margin:0;color:var(--warn)' },
+        `订阅没取到：${err.message}`));
+    } finally {
+      TRK.loading = false;
+    }
+  }
+
+  function renderTracking() {
+    const data = TRK.data;
+    if (!data) return;
+    const tracks = data.tracks || [];
+    const news = tracks.reduce((sum, t) => sum + t.new_count, 0);
+    const parts = [`${tracks.length} 条订阅`];
+    if (news) parts.push(`共 ${news} 条新增`);
+    parts.push(data.scheduler.enabled
+      ? `定时器开（每 ${data.scheduler.tick_seconds} 秒看一眼有没有到期的）`
+      : '定时器关（只能手动抓）');
+    $('trk-state').textContent = parts.join(' · ');
+
+    if (!tracks.length) {
+      $('trk-out').replaceChildren(el('p', { class: 'note', style: 'margin:0' },
+        data.note || '还没有订阅。在上面的输入框里写一个关键词（比如 retrieval augmented），点击「添加追踪」。'));
+      return;
+    }
+    const nodes = [];
+    if (data.note) {
+      nodes.push(el('p', { class: 'note', style: 'margin:0 0 10px;color:var(--warn)' }, data.note));
+    }
+    tracks.forEach((t) => nodes.push(trackCard(t)));
+    $('trk-out').replaceChildren(...nodes);
+  }
+
+  /** 「3 分钟前」比一个 ISO 时间戳好读；解析不了就原样给。 */
+  function agoText(iso) {
+    if (!iso) return '';
+    const at = new Date(iso);
+    if (Number.isNaN(at.getTime())) return iso;
+    const secs = Math.max(0, Math.round((Date.now() - at.getTime()) / 1000));
+    if (secs < 60) return '刚刚';
+    const mins = Math.round(secs / 60);
+    if (mins < 60) return `${mins} 分钟前`;
+    const hours = Math.round(mins / 60);
+    if (hours < 48) return `${hours} 小时前`;
+    return `${Math.round(hours / 24)} 天前`;
+  }
+
+  function intervalText(minutes) {
+    if (minutes % 1440 === 0) return `${minutes / 1440} 天`;
+    if (minutes % 60 === 0) return `${minutes / 60} 小时`;
+    return `${minutes} 分钟`;
+  }
+
+  function timeText(iso) {
+    const at = new Date(iso);
+    if (Number.isNaN(at.getTime())) return iso;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${at.getMonth() + 1}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  }
+
+  function trackCard(t) {
+    const runBtn = el('button', { class: 'btn', type: 'button' }, '立即抓取');
+    runBtn.addEventListener('click', () => runTrackNow(t, runBtn));
+    const delBtn = el('button', { class: 'btn', type: 'button' }, '删除');
+    delBtn.addEventListener('click', () => deleteTrack(t, delBtn));
+
+    // 状态行：上次什么时候抓的、结果是什么。抓取失败要写在这里，而不是藏进标题里
+    const bits = [];
+    if (!t.last_run_at) bits.push('还没抓过');
+    else {
+      bits.push(`上次抓取 ${agoText(t.last_run_at)}`);
+      if (t.last_status === 'degraded') bits.push('这次没抓到');
+      else if (t.last_status === 'baseline') bits.push('首轮基线');
+      else if (t.new_count) bits.push(`新增 ${t.new_count} 条`);
+      else bits.push('无新增');
+    }
+    bits.push(`每${intervalText(t.interval_minutes)}抓一次`);
+    bits.push(t.due ? '已到时间' : `下次 ${t.next_run_at ? timeText(t.next_run_at) : '待定'}`);
+    bits.push(`已见 ${t.seen_count} 条`);
+
+    // .vcap / .pg 的样式挂在 .figcard 下面，这里用的是 .hitrow，所以自己写
+    const head = el('div', {
+      style: 'display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0',
+    },
+    el('span', { style: 'font-weight:600' }, t.query),
+    el('span', {
+      style: 'margin-left:auto;font-size:var(--fs-xs);color:var(--ink-3);white-space:nowrap',
+    }, t.categories.join(' / ')));
+    const badges = [];
+    if (t.new_count) {
+      badges.push(el('span', { class: 'chip', style: 'background:var(--wash);color:var(--s1)' },
+        `新增 ${t.new_count}`));
+    }
+
+    const items = (t.items || []).map((item) => trackItemRow(item));
+    if (!items.length) {
+      items.push(el('p', { class: 'note', style: 'margin:0' },
+        t.last_status === 'degraded'
+          ? `这次没抓到：${t.last_note || '原因未知'}`
+          : '还没有条目。点击「立即抓取」拉一次（首轮会作为基线，不计入新增）。'));
+    } else if (t.items_total > t.items.length) {
+      items.push(el('p', { class: 'note', style: 'margin:6px 0 0' },
+        `共 ${t.items_total} 条，这里列最近 ${t.items.length} 条`));
+    }
+
+    return el('div', { class: 'hitrow', style: 'margin-bottom:12px' },
+      el('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap' },
+        ...badges, el('div', { style: 'flex:1;min-width:0' }, head), runBtn, delBtn),
+      el('div', { class: 'meta' }, bits.join(' · ')),
+      t.last_note && t.last_status !== 'degraded'
+        ? el('p', { class: 'note', style: 'margin:6px 0;color:var(--ink-2)' }, t.last_note)
+        : '',
+      el('div', { style: 'margin-top:10px' }, ...items));
+  }
+
+  function trackItemRow(item) {
+    const actions = [];
+    // 已在库里的不给「入库」按钮：点了也只会得到一句"库内已有"，不如直接标出来
+    if (item.in_library) {
+      actions.push(el('span', { class: 'chip' }, '已在库'));
+    } else if (item.arxiv_id) {
+      const btn = el('button', { class: 'btn', type: 'button' }, '入库');
+      btn.addEventListener('click', () => ingestArxiv(item, btn));
+      actions.push(btn);
+    }
+    if (item.abs_url) {
+      actions.push(el('a', { class: 'sub', href: item.abs_url, target: '_blank', rel: 'noopener',
+        style: 'margin:0' }, 'arXiv 页面 →'));
+    }
+    const names = item.authors.length > 3
+      ? `${item.authors.slice(0, 3).join('、')} 等 ${item.authors.length} 人`
+      : item.authors.join('、');
+    const meta = [names, item.published ? item.published.slice(0, 10) : '',
+      `首次见到 ${agoText(item.first_seen)}`].filter(Boolean).join(' · ');
+    return el('div', { style: 'border-top:1px solid var(--hair);padding:8px 0' },
+      el('div', { style: 'display:flex;gap:8px;align-items:baseline' },
+        item.is_new ? el('span', { class: 'chip', style: 'color:var(--s1)' }, '新') : '',
+        el('div', { style: 'flex:1;min-width:0;font-weight:600' }, item.title)),
+      el('div', { class: 'meta' }, meta),
+      el('div', { class: 'act', style: 'margin-top:6px' }, ...actions));
+  }
+
+  async function runTrackNow(track, btn) {
+    const label = btn.textContent;
+    btn.disabled = true;
+    let warned = false;
+    const started = Date.now();
+    // 抓取要真出网，按钮上不写秒数的话，十几秒的等待看起来就是"点了没反应"
+    const tick = setInterval(() => {
+      const secs = Math.round((Date.now() - started) / 1000);
+      btn.textContent = `抓取中 ${secs}s…`;
+      if (!warned && secs >= 5) {
+        warned = true;
+        $('trk-state').textContent =
+          '正在从 arXiv 拉最近 40 条投稿（服务器到 arXiv 约 13KB/s，通常 10–20 秒）…';
+      }
+    }, 1000);
+    // fetch 自己不设上限：链路半死不活时按钮会一直转下去，所以给一个兜底
+    const ctl = new AbortController();
+    const guard = setTimeout(() => ctl.abort(), TRACK_TIMEOUT_MS);
+    try {
+      const data = await api(`/tracking/${encodeURIComponent(track.id)}/run`,
+        { method: 'POST', signal: ctl.signal });
+      clearTimeout(guard);
+      clearInterval(tick);
+      replaceTrack(data);
+      $('trk-state').textContent = data.last_note || '抓取完成';
+    } catch (err) {
+      clearTimeout(guard);
+      clearInterval(tick);
+      $('trk-state').textContent = err.name === 'AbortError'
+        ? '等了一分半仍未返回，已放弃（arXiv 那边多半在限流）。订阅没变，稍后再点。'
+        : `抓取失败：${err.message}`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+
+  async function deleteTrack(track, btn) {
+    btn.disabled = true;
+    try {
+      await api(`/tracking/${encodeURIComponent(track.id)}`, { method: 'DELETE' });
+      TRK.data.tracks = TRK.data.tracks.filter((t) => t.id !== track.id);
+      renderTracking();
+      $('trk-state').textContent = `已删除订阅「${track.query}」`;
+    } catch (err) {
+      btn.disabled = false;
+      $('trk-state').textContent = `删除失败：${err.message}`;
+    }
+  }
+
+  async function addTrack() {
+    const query = $('trk-q').value.trim();
+    if (!query) { $('trk-state').textContent = '请先输入追踪关键词'; $('trk-q').focus(); return; }
+    const btn = $('trk-add');
+    btn.disabled = true;
+    try {
+      const track = await api('/tracking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query,
+          interval_minutes: Number($('trk-interval').value) || 360,
+        }),
+      });
+      $('trk-q').value = '';
+      TRK.data = TRK.data || { tracks: [], scheduler: { enabled: true, tick_seconds: 60 }, note: '' };
+      $('trk-state').textContent = '已建立订阅，正在抓首轮基线…';
+      await runTrackNow(track, btn);
+    } catch (err) {
+      $('trk-state').textContent = `添加失败：${err.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  /** 跑到期的订阅（后端按 last_run_at + 间隔算谁到期）。定时器没开时，这是唯一的自动抓取入口。 */
+  async function runDueTracks() {
+    const btn = $('trk-run-due');
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '抓取中…';
+    try {
+      const data = await api('/tracking/run', { method: 'POST' });
+      TRK.data = data;
+      renderTracking();
+      const ran = data.tracks.filter((t) => t.last_run_at).length;
+      $('trk-state').textContent = ran
+        ? '已跑完到期的订阅'
+        : '没有到期的订阅（每条订阅按自己的间隔计时）';
+    } catch (err) {
+      $('trk-state').textContent = err.status === 409
+        ? '上一轮抓取还没结束，稍等几秒'
+        : `抓取失败：${err.message}`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+
+  /** 用一个新拿到的 track 覆盖列表里那条（抓取接口会把整条订阅一起返回）。 */
+  function replaceTrack(track) {
+    if (!TRK.data) return;
+    const at = TRK.data.tracks.findIndex((t) => t.id === track.id);
+    if (at >= 0) TRK.data.tracks[at] = track;
+    else TRK.data.tracks.push(track);
+    renderTracking();
+  }
+
   /* ---------------------------------------------------------------- 学术综述
 
      与写作 Copilot 同一套规矩：模型只返回证据编号，引用原文由服务端回填。
@@ -5207,6 +5519,9 @@ svg{width:100%;height:auto;display:block}
   $('rec-run')?.addEventListener('click', () => loadRecommend(true));
   $('rec-days')?.addEventListener('change', () => loadRecommend());
   $('rec-cats')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadRecommend(); });
+  $('trk-add')?.addEventListener('click', addTrack);
+  $('trk-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') addTrack(); });
+  $('trk-run-due')?.addEventListener('click', runDueTracks);
   sourceButtons().forEach((btn) => btn.addEventListener('click', () => {
     // 「全部」是按一下全选、再按一下全不选
     if (!btn.dataset.src) {
@@ -5532,7 +5847,11 @@ svg{width:100%;height:auto;display:block}
     // 检索 / 综述是"进来就要打字"的视图：把光标放进输入框，点了立刻有反应
     retrieve: () => $('arx-q')?.focus(),
     // 推荐页进来就拉一次；之后再进来用已经拉到的，别每点一次等九秒
-    recommend: () => { if (!REC.loaded) loadRecommend(); },
+    // 订阅追踪那一段跟着一起读：它只是一次本地读盘，几毫秒
+    recommend: () => {
+      if (!REC.loaded) loadRecommend();
+      if (!TRK.data) loadTracking();
+    },
     review: () => $('rv-topic')?.focus(),
   };
   function enterView(name) {
