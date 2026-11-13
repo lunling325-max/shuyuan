@@ -4422,14 +4422,20 @@ svg{width:100%;height:auto;display:block}
 
       // 图注的可信度必须显示出来：编造的数字被替换成了 [未核实]，
       // 或者整段退回了模板 —— 这两件事用户有权知道
-      const notes = [...(out.notes || []), ...(out.caption?.notes || [])];
+      // 两处 note 可能有交集（后端有一阵把图注的说明同时放进两级），拼起来前先去重：
+      // 同一句话连印两遍比不印更让人怀疑这里有没有人看过
+      const notes = [...new Set([...(out.notes || []), ...(out.caption?.notes || [])])];
       const box = $('viz-caption-note');
       box.replaceChildren();
       if (out.caption && !out.caption.trusted && !notes.length) {
         notes.push('这段图注没有通过数字核验，仅供参考。');
       }
       if (notes.length) box.append(el('div', { class: 'note', style: 'margin:0 0 6px' }, notes.join(' ')));
-      if (out.degraded) box.append(el('div', { class: 'note', style: 'margin:0' }, '大模型不可用，图注由统计卡模板生成。'));
+      // 兜底那一句只在后端什么都没说时才补：后端对"模型不可用"已经有自己的说明
+      // （在 caption.notes 里），两边各写一句就成了"同一件事，两句话，各印一遍"
+      if (out.degraded && !notes.length) {
+        box.append(el('div', { class: 'note', style: 'margin:0' }, '大模型不可用，图注由统计卡模板生成。'));
+      }
     } catch (err) {
       if (seq !== VIZ.seq) return;
       VIZ.out = null;

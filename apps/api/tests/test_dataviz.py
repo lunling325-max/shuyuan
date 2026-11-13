@@ -455,7 +455,7 @@ def test_caption_scrubs_invented_number(client, tmp_path, monkeypatch):
     assert "42.7" not in body["caption"]["text"]
     assert "[未核实]" in body["caption"]["text"]
     assert body["caption"]["key_numbers"] == [], "编造的关键数字也要剔除"
-    assert any("42.7" in note for note in body["notes"])
+    assert any("42.7" in note for note in body["caption"]["notes"])
 
 
 def test_caption_falls_back_to_template_when_most_numbers_are_invented(client, tmp_path, monkeypatch):
@@ -473,7 +473,24 @@ def test_caption_falls_back_to_template_when_most_numbers_are_invented(client, t
     assert "88.8" not in body["caption"]["text"]
     assert body["caption"]["text"].startswith("图 1.")
     assert "数据区间：n=3" in body["caption"]["text"]
-    assert any("模板图注" in note for note in body["notes"])
+    assert any("模板图注" in note for note in body["caption"]["notes"])
+
+
+def test_caption_notes_are_not_printed_twice(client, tmp_path, monkeypatch):
+    """图注的说明只放在 `caption.notes` 里。
+
+    实测过一次两边都放：界面把两个列表拼起来，同一句话连印两遍
+    （"模型图注没有任何可核验的数字" ×2），看着像页面自己都没读过这一段。
+    """
+    body = _line_body(
+        client,
+        tmp_path,
+        monkeypatch,
+        {"caption": "准确率提升 88.8%，损失下降 77.7%，样本量 12345。", "key_numbers": []},
+    )
+    assert body["caption"]["trusted"] is False
+    assert body["caption"]["notes"]
+    assert not set(body["notes"]) & set(body["caption"]["notes"])
 
 
 def test_caption_number_matching_handles_percent_and_rounding():
@@ -515,7 +532,7 @@ def test_llm_outage_degrades_with_template_caption(client, tmp_path, monkeypatch
     assert body["caption"]["trusted"] is False
     assert body["caption"]["text"].startswith("图 1.")
     assert "数据区间：n=3" in body["caption"]["text"]
-    assert any("模型不可用" in note for note in body["notes"])
+    assert any("模型不可用" in note for note in body["caption"]["notes"])
     # 图和导出仍然完整
     assert body["chart"]["svg"].startswith("<svg")
     assert body["exports"]["tikz"]

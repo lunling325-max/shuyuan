@@ -748,7 +748,9 @@ def dataviz_chart(
             trusted=result.trusted,
             notes=list(result.notes),
         )
-        notes.extend(result.notes)
+        # 图注自己的说明**不**再并进顶层 notes：两份都返回的话，界面把两个列表
+        # 拼起来时同一句话会出现两次（实测就撞过："模型图注没有任何可核验的数字"
+        # 连印两遍）。顶层 notes 只说表格与图表本身的事，图注的事归 caption.notes。
         degraded = result.degraded
 
     return DatavizOut(
