@@ -279,6 +279,7 @@ E-038 之后界面是十二个视图（新增「跨文献对比」）。
 | `RAG_OCR` | 可选，设 `off` 关掉扫描件识别。关闭时扫描页不会被假装识别成功，接口如实报 `ocr_available=false`（见 `docs/EXPERIMENTS.md` E-018） |
 | `RESEARCH_PROXY` | 可选。默认**直连、不走系统代理**（这台机器的注册表代理会让每次请求多绕一跳，实测直连 1.7 秒、走代理 3 秒起）；填 `system` 用回系统代理，填 `http://host:port` 用指定代理（见 `docs/EXPERIMENTS.md` E-016） |
 | `ARXIV_TLS13` | 可选，设 `1` 就只用默认协议、不退回 TLS 1.2。不设时按主机自动选：连接建不起来就换另一种协议重发一次，哪种成功记住了（见 `docs/EXPERIMENTS.md` E-013、E-016） |
+| `PAPER_TRACKING_SCHEDULER` | 可选，设 `0` 关掉 arXiv 追踪的后台定时器（每 60 秒看一眼有没有到期的订阅）。单测里默认关着（见 `docs/EXPERIMENTS.md` E-042） |
 | `SEMANTIC_SCHOLAR_API_KEY` | 可选。不配时 Semantic Scholar 作为一个来源会被限流（429），界面如实标注「暂不可用」，其余来源不受影响 |
 
 `.env` 已在 `.gitignore` 里，密钥不进仓库。
@@ -332,6 +333,7 @@ docker run --rm -p 8017:8017 \
 | `RESEARCH_PROXY` | 否 | 空（直连） | 默认绕开系统代理；填 `system` 用回系统代理，填 `http://host:port` 用指定代理 |
 | `ARXIV_TLS13` | 否 | 空（按主机自动在 1.3 / 1.2 之间试） | 设 `1` 只走默认协议，不再退回 TLS 1.2 |
 | `SEMANTIC_SCHOLAR_API_KEY` | 否 | 空 | 填了才走 Semantic Scholar；不填则这一路稳定 429，界面标为「暂不可用」 |
+| `PAPER_TRACKING_SCHEDULER` | 否 | 开（每 60 秒一跳） | 设 `0` 关掉 arXiv 追踪的后台定时器 |
 | `PORT` | 否 | `8017` | 仅 Docker 启动命令使用；应用代码不直接读取 |
 
 `.env.example` 只含占位符。密钥通过 `env_file` / `--env-file` / `-e` 注入，**不要写进 Dockerfile、
@@ -376,3 +378,39 @@ docker run --rm -p 8017:8017 \
 依赖里刻意没有 torch，主要体积来自 onnxruntime、numpy、pymupdf，预计未压缩约 250–350MB
 （实际以 `docker images` 为准；本次未构建验证）。
 
+## 团队与许可
+
+| 项 | 内容 |
+|---|---|
+| 参赛者 | 〈待填：姓名〉 |
+| 学校 / 院系 | 〈待填〉 |
+| 联系方式 | 〈待填：邮箱〉 |
+| 赛项 | 「智领科研·意图驱动：基于大模型与 Agent 架构的全流程科研助手构建挑战赛」（个人赛 · 作品题） |
+
+**许可**：仓库目前**没有** `LICENSE` 文件。发布前二选一 —— 这是需要参赛者本人决定的，
+不是技术选择：
+
+- **MIT**：最短、附加限制最少，别人能直接拿去改；适合「希望被广泛使用」。
+- **Apache-2.0**：与 MIT 接近，另含专利授权条款与「改动须说明」；适合「可能被公司采用」。
+
+选定后把该协议的官方全文放进仓库根的 `LICENSE`，并把这一行改掉。
+在此之前按 **All rights reserved** 处理 —— 能看，但未获授权不能复用；
+这跟赛题里「开源潜力与推广前景」那一格的期望相反，所以**发布前一定要补**。
+
+### 发布前的安全检查（2026-11-14 实测）
+
+| 检查 | 结果 |
+|---|---|
+| `.env` 是否进过仓库 | 从未 —— 全历史里只有 `.env.example` |
+| 像密钥的字面量（`sk-…` / `AKIA…`） | 工作区与**全部提交**均为 0 处 |
+| 演示 PDF / 模型 / `data/` | 均未跟踪（`.gitignore` 生效，约 43 MB 不进仓库） |
+| 仓库体积 | 224 个文件 / 14 MB，最大单文件 `uv.lock` 332 KB |
+
+复现（复制粘贴即可，不需要任何领域知识）：
+
+```bash
+git ls-files | grep -E '^\.env$' || echo "没跟踪 .env"                 # 应打印「没跟踪 .env」
+git grep -lIE 'sk-[A-Za-z0-9]{20,}' $(git rev-list --all) | wc -l      # 应为 0
+git ls-files | wc -l                                                   # 224
+git ls-files -z | xargs -0 du -ch 2>/dev/null | tail -1                # 14M  total
+```
