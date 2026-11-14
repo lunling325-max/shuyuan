@@ -282,7 +282,7 @@ E-038 之后界面是十二个视图（新增「跨文献对比」）。
 | 文件 | 内容 |
 |---|---|
 | [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 16 张实机截图与创新点说明（PDF 29 页，`build/TECH.pdf`） |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 54 篇实验记录（E-001–E-054），每条带实测数字 |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 55 篇实验记录（E-001–E-055），每条带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | **五分钟验收清单**：点哪里 → 该看到什么 → 看不到意味着什么（给评审或临时接手的人） |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑、回滚标签与对策） |
