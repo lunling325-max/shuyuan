@@ -162,7 +162,7 @@ OCR 误差会被逐句对齐算成改动，实测只剩 **40.0%**，界面上也
 
 ## 10. 如果要做更硬的验证
 
-- `cd apps/api && uv run pytest -q` —— 570 项；没有演示 PDF 时自动跳过并写明缺哪个文件；
+- `cd apps/api && uv run pytest -q` —— 571 项；没有演示 PDF 时自动跳过并写明缺哪个文件；
 - `uv run python scripts/eval_qa.py` —— 24 题人工标注集，重算引用准确率（会走模型，有额度成本）；
 - `uv run python scripts/eval_retrieval.py` —— 18 题检索评测，可冻结模型改写结果做对比。
 

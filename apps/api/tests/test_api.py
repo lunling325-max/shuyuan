@@ -1012,3 +1012,22 @@ def test_qa_tells_the_reader_when_the_paper_is_a_scan(client, paper_id, monkeypa
         f"/api/papers/{paper_id}/qa", json={"question": "attention heads", "mode": "retrieve"}
     ).json()
     assert body["scanned"] is True
+
+
+def test_whitespace_only_question_is_rejected_before_the_pipeline(client, paper_id):
+    """只写空格的问题以前能过 min_length=1，整条链路白跑一遍再返回 200 + 空结论。
+
+    实测过一次：`{"question": "   "}` 返回 200、claims/evidence 全空、耗时 833 ms ——
+    用户看到的是一张"什么都没答"的界面，而不是"问题不能为空"。
+    同样的口径也用在综述主题、框架 idea、Agent 任务与跨文献对比的问题上。
+    """
+    for body in ({"question": "   "}, {"question": ""}, {"question": chr(9) + chr(10)}):
+        r = client.post(f"/api/papers/{paper_id}/qa", json=body)
+        assert r.status_code == 422, r.text
+
+    assert client.post("/api/review", json={"topic": "   "}).status_code == 422
+    assert client.post("/api/copilot/outline", json={"idea": "  "}).status_code == 422
+    assert client.post("/api/agent/plan", json={"task": " "}).status_code == 422
+    assert client.post(
+        "/api/papers/compare", json={"paper_ids": [paper_id, paper_id], "question": "  "}
+    ).status_code == 422

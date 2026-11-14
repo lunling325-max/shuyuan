@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AnchorOut(BaseModel):
@@ -179,6 +179,10 @@ class ChunkOut(BaseModel):
 
 
 class QARequest(BaseModel):
+    # 先去掉首尾空白再校验长度：只写空格的问题以前能过 min_length=1，
+    # 于是整条链路照跑一遍、返回 200 + 空结论（实测 833 ms 白跑一次）
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     question: str = Field(min_length=1, max_length=500)
     k: int = Field(default=6, ge=1, le=20)
     expand: bool = True
@@ -203,6 +207,7 @@ class BilingualOut(BaseModel):
 
 
 class CopilotOutlineRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
     idea: str = Field(min_length=1, max_length=1000)
     max_points: int = Field(default=4, ge=2, le=4, description="每个章节最多几条要点")
 

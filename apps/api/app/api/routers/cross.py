@@ -21,7 +21,7 @@ import os
 import time
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.api import deps
@@ -46,6 +46,7 @@ class CompareRequest(BaseModel):
     paper_ids: list[str] = Field(
         min_length=2, max_length=3, description="要对比的文献 id，2 到 3 篇"
     )
+    model_config = ConfigDict(str_strip_whitespace=True)
     question: str = Field(min_length=1, max_length=1000)
     k: int = Field(default=3, description="每篇召回几块证据，夹到 1..4")
 

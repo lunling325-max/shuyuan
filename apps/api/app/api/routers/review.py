@@ -16,7 +16,7 @@ schemas.py 是"全站共用契约"，改它要牵动 main.py 的 import 列表�
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api import deps
 from app.rag.review import build_review
@@ -25,6 +25,7 @@ router = APIRouter()
 
 
 class ReviewRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
     topic: str = Field(min_length=1, max_length=1000)
     # 不用 ge/le：契约要求越界时"夹住"而不是 422，夹取逻辑在 rag 层
     max_papers: int = Field(default=6, description="最多使用几篇论文，越界会夹到 1..12")

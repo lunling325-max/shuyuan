@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.agent.planner import Plan, plan_task, run_task
 from app.agent.registry import TOOLS
@@ -35,6 +35,7 @@ class AgentToolsOut(BaseModel):
 
 
 class AgentPlanRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
     task: str = Field(min_length=1, max_length=2000)
 
 
