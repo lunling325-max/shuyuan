@@ -3644,9 +3644,16 @@ svg{width:100%;height:auto;display:block}
       CMP.cache.set(key, data);
       CMP.data = data;
       renderCompareZh();
-      $('cmp-state').textContent = data.degraded
+      // 状态行不能说谎：degraded 有两种 —— 一段都没翻成，或只翻了一部分。
+      // 以前一律写「只有原文」，可正文里明明摆着一堆译文（实测撞过：扫描件的
+      // 作者块，人名照抄回来算译文，状态行却说只有原文）。按有没有译文分开写。
+      const zhCount = data.paragraphs.filter((p) => p.zh).length;
+      $('cmp-state').textContent = !zhCount
         ? '只有原文'
-        : `p.${data.page_start} · ${data.paragraphs.length} 段对照`;
+        : `p.${data.page_start} · ${data.paragraphs.length} 段`
+          + (zhCount < data.paragraphs.length
+            ? `（其中 ${data.paragraphs.length - zhCount} 段未取得译文）`
+            : '对照');
       if (chunk && data.paragraphs.length !== splitParas(chunk.text).length) {
         $('cmp-state').textContent += '（段数与原块不一致，已标出）';
       }
@@ -5748,8 +5755,14 @@ svg{width:100%;height:auto;display:block}
     (data.notes || []).forEach((n) => out.append(
       el('p', { class: 'note', style: 'margin:0 0 8px;color:var(--warn)' }, n)));
     if (!data.claims.length) {
+      // 空结论有两种来路，说法不能一样：
+      // 降级时上面已经有原因了；没降级却是空，说明模型按规矩拒绝了 ——
+      // 检索到的原文里没有能支撑这个问题的证据。
       out.append(el('p', { class: 'note', style: 'margin:0' },
-        '本次没有给出对比结论。右侧仍列出各篇召回的原文，可自行比对。'));
+        data.degraded
+          ? '本次没有给出对比结论（原因见上）。右侧仍列出各篇召回的原文，可自行比对。'
+          : '模型没有给出对比结论：检索到的原文里没有能支撑这个问题的证据，按规矩就不编。'
+            + '右侧仍列出各篇召回的原文，可自行比对。'));
     }
     data.claims.forEach((c) => {
       const block = el('div', { class: 'a' });
