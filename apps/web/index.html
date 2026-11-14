@@ -737,6 +737,21 @@ svg{width:100%;height:auto;display:block}
   #view-library .table-wrap th:nth-child(4), #view-library .table-wrap td:nth-child(4){display:none}
   #view-library .table-wrap th:first-child{width:auto}
 }
+/* 更窄（≤520px）时"页数"也得让位：标题 + 页数 + 操作 的最小宽度实测 439px，
+   390px 的屏幕上整页会被撑出 62px 的横向滚动 —— 手机上图能左右晃，比少一列更难用。
+   标题和"删"是必须留的。 */
+@media (max-width:520px){
+  #view-library .table-wrap th:nth-child(2), #view-library .table-wrap td:nth-child(2){display:none}
+}
+/* 再窄一点（≤384px，老安卓与 iPhone SE）连"标题 + 操作"都放不下：表格的最小宽度由
+   标题的不可断词决定。这时改成固定布局，操作列钉死 76px、标题列吃剩下的并允许断词。 */
+@media (max-width:384px){
+  #view-library .table-wrap table{table-layout:fixed}
+  #view-library .table-wrap th:first-child,
+  #view-library .table-wrap td:first-child{width:auto;overflow-wrap:anywhere}
+  #view-library .table-wrap th:last-child,
+  #view-library .table-wrap td:last-child{width:76px}
+}
 </style>
 </head>
 <body>
