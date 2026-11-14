@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>溯源 · 科研助手</title>
+<meta name="description" content="每条结论都能点回 PDF 原文页码与坐标框的科研助手：抗幻觉溯源、版本谱系、引用图谱、中英联动阅读。">
 <!-- 图标是内联 SVG：不占额外请求、不用管静态文件路径，颜色取主题色 --s1。
      「溯」编码成 %E6%BA%AF，避免不同浏览器对 data URI 里非 ASCII 的处理差异。 -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Ccircle cx='13.8' cy='13.8' r='6.1' fill='none' stroke='%23fff' stroke-width='2.6'/%3E%3Cpath d='M18.5 18.5L23 23' stroke='%23fff' stroke-width='2.9' stroke-linecap='round'/%3E%3Cpath d='M10.9 12.6H16.7' stroke='%23fff' stroke-width='1.7' stroke-linecap='round' opacity='.9'/%3E%3Cpath d='M10.9 15.6H14.7' stroke='%23fff' stroke-width='1.7' stroke-linecap='round' opacity='.55'/%3E%3C/svg%3E">
@@ -397,6 +398,15 @@ mark{
 /* 公式的文本层：等宽、可选中，但样式上就不该看着像排版源码 */
 .vtext{display:block;font-size:var(--fs-xs);color:var(--ink-3);white-space:pre-wrap;
   word-break:break-word;padding:4px 6px;border-radius:6px;background:var(--wash)}
+/* 问答空态里的示例问题：点一下只填进输入框，不自动发 ——
+   自动发等于替用户决定问什么，而"问什么"恰恰是这套系统要帮他想的部分 */
+.qa-egs{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
+.qeg{
+  border:1px solid var(--hair);background:var(--surface-1);color:var(--s1);
+  border-radius:999px;padding:3px 10px;font:inherit;font-size:var(--fs-xs);
+  cursor:pointer;max-width:100%;text-align:left;
+}
+.qeg:hover{border-color:var(--s1);background:var(--wash)}
 .q{align-self:flex-end;background:var(--wash);border-radius:11px 11px 3px 11px;
   padding:9px var(--sp-3);font-size:var(--fs-sm);max-width:88%}
 .a{font-size:var(--fs-sm);line-height:1.6}
@@ -2443,6 +2453,7 @@ svg{width:100%;height:auto;display:block}
       $('qa-body').replaceChildren(
         el('p', { class: 'note', style: 'margin:0' },
           `已载入《${state.paper.title}》：共 ${state.paper.chunks} 个块。可就任意细节提问，结论均回原文核验。`),
+        qaEgRow(),
       );
     } catch (err) {
       showNote(`打开文献失败：${err.message}`, 'error');
@@ -3108,6 +3119,24 @@ svg{width:100%;height:auto;display:block}
   }
 
   // ---------------------------------------------------------------- 问答
+
+  /** 问答空态里的三个示例问题。
+   *
+   * 为什么给例子：评委打开阅读器，右栏写的是"可就任意细节提问" —— 但"能问什么"
+   * 恰恰是最难想的一步。给三个**这篇库里问得出答案**的问法，他点一下就有话可问。
+   *
+   * 为什么只填进输入框、不自动发送：自动发等于替他决定问什么，而且会在他还没准备好时
+   * 就扣一次模型调用。填进去、光标停在末尾，按 Enter 是他的选择。 */
+  function qaEgRow() {
+    const eg = [
+      '这篇论文用了几个注意力头？',
+      '训练用了多少块 GPU、多久？',
+      '在 WMT 2014 英德任务上的 BLEU 是多少？',
+    ];
+    return el('div', { class: 'qa-egs', 'aria-label': '示例问题' },
+      el('span', { class: 'note', style: 'margin:0' }, '试试：'),
+      ...eg.map((text) => el('button', { class: 'qeg', type: 'button' }, text)));
+  }
 
   function anchorBlock(anchor) {
     // 先按引用原句找块，再退回按页码 —— 同一页上往往有好几节，
@@ -5708,6 +5737,18 @@ svg{width:100%;height:auto;display:block}
   $('ver-old')?.addEventListener('change', () => { $('ver-state').textContent = ''; });
   $('ver-new')?.addEventListener('change', () => { $('ver-state').textContent = ''; });
   $('qa-send')?.addEventListener('click', ask);
+  // 示例问题：点一下把文字填进输入框并聚焦，**不自动发送** ——
+  // 自动发等于替用户决定问什么，而"该问什么"正是这套系统要帮他想的部分。
+  // 用事件委托而不是逐个数：打开文献后问答区会整体重画，绑定在旧节点上的监听会一起没掉。
+  $('qa-body')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.qeg');
+    const input = $('qa-input');
+    if (!btn || !input) return;
+    input.value = btn.textContent.trim();
+    input.focus();
+  });
+  // 初始空态也放一组（打开文献后由 openPaper 重画时再放一组）
+  $('qa-body')?.append(qaEgRow());
   $('qa-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') ask(); });
 
   /* 进视图的统一入口：导航点击、hashchange、方向键切 tab 最后都落到 activate()，
