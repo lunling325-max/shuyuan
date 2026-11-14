@@ -282,7 +282,7 @@ E-038 之后界面是十二个视图（新增「跨文献对比」）。
 | 文件 | 内容 |
 |---|---|
 | [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 16 张实机截图与创新点说明（PDF 30 页，正好压在上限，`build/TECH.pdf`） |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 59 篇实验记录（E-001–E-059），每条带实测数字 |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 60 篇实验记录（E-001–E-060），每条带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEFENSE.md`](docs/DEFENSE.md) | **答辩问答准备**：十二个会被问到的问题，每题给一句话答案 + 追问准备 + 数字出处，另附三个"不要答"的坑 |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | **五分钟验收清单**：点哪里 → 该看到什么 → 看不到意味着什么（给评审或临时接手的人） |

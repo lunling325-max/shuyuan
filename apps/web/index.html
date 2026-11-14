@@ -1324,8 +1324,11 @@ svg{width:100%;height:auto;display:block}
     nav.scrollLeft = Math.max(0, Math.min(nav.scrollLeft + delta, nav.scrollWidth - nav.clientWidth));
   }
 
-  function activate(name, { replaceHash = true } = {}) {
-    if (!VIEWS.includes(name)) name = 'library';
+  function activate(raw, { replaceHash = true } = {}) {
+    // hash 可以带后缀：`#reader/<paperId>` —— 这样"某一篇的阅读器"是可以分享的链接
+    const [head, ...rest] = String(raw || '').split('/');
+    const deepId = head === 'reader' ? (rest[0] || '') : '';
+    let name = VIEWS.includes(head) ? head : 'library';
     nav.querySelectorAll('button').forEach(btn => {
       const on = btn.dataset.v === name;
       btn.setAttribute('aria-selected', String(on));
@@ -1339,13 +1342,19 @@ svg{width:100%;height:auto;display:block}
        不用 scrollIntoView：它会连页面一起纵向滚，把刚归零的 main.scrollTop 又顶开。 */
     syncNavScroll(name);
     if (replaceHash) {
-      const hash = name === 'library' ? '' : '#' + name;
+      // 停在阅读器上时把当前文献一起写进 hash，别把已有的深链抹掉
+      const keepId = typeof window.__paperId === 'function' ? window.__paperId() : '';
+      const keep = name === 'reader' && keepId ? '/' + keepId : '';
+      const hash = name === 'library' ? '' : '#' + name + keep;
       if (location.hash !== hash) history.replaceState(null, '', hash || location.pathname);
     }
     /* 进视图后该做的事（拉图谱 / 载工具 / 聚焦输入框）交给下面那个脚本块。
        replaceState 不触发 hashchange，所以以前点导航栏进图谱、任务 Agent 时
        那些只挂在 hashchange 上的加载器一次都没跑过 —— 看上去就是"点了没反应"。 */
     if (typeof window.__enterView === 'function') window.__enterView(name);
+    // 深链交给下面那个脚本块去开：`state` 与 openPaper 都在那边，
+    // 在这里直接调用会 ReferenceError（**第一版就是这么坏的**：视图切了，hash 却没写）
+    if (deepId && typeof window.__openDeepPaper === 'function') window.__openDeepPaper(deepId);
   }
 
   nav.addEventListener('click', e => {
@@ -1481,6 +1490,9 @@ svg{width:100%;height:auto;display:block}
 
   const API = location.origin + '/api';
   const $ = (id) => document.getElementById(id);
+
+  // 深链要打开、但库还没载完的那一篇（由 window.__openDeepPaper 写入）
+  let deepPending = '';
 
   const state = {
     papers: [], paper: null, chunks: [], chunk: null, uploading: null,
@@ -2207,9 +2219,16 @@ svg{width:100%;height:auto;display:block}
       showNote('');
       renderDupAlert(null);   // 刷新后旧的上传提示就过期了
       if (state.papers.length && !state.paper) {
-        // ?paper=<id> 指定这次演示用哪一篇；没指定就用库内最新上传的那篇
-        const want = new URLSearchParams(location.search).get('paper');
-        const target = state.papers.find((p) => p.id === want) || state.papers[0];
+        // 深链 `#reader/<id>` 优先；其次是 `?paper=<id>`；都没有就用库内最新那篇
+        const fromHash = /^reader\/(.+)$/.exec(location.hash.slice(1))?.[1] || '';
+        const want = fromHash || new URLSearchParams(location.search).get('paper');
+        const found = state.papers.find((p) => p.id === want);
+        // 深链指向的文献不在库里：说清楚，再退到第一篇 —— 静默换成另一篇比报错更糟，
+        // 用户会以为"链接就是这篇"，然后对着别人的论文提问
+        if (fromHash && !found) {
+          showNote(`链接里的文献不在库里（${fromHash}），可能已被删除；已改为打开库内第一篇`, 'error');
+        }
+        const target = found || state.papers[0];
         await openPaper(target.id);
         autoAsk();
       } else if (!state.papers.length) {
@@ -2426,6 +2445,34 @@ svg{width:100%;height:auto;display:block}
     await openPaper(id);
   }
 
+  /* ---- 深链：`#reader/<paperId>` --------------------------------------
+     两个函数必须住在这个脚本块里：它们要用 state 与 openPaper，
+     而导航与 activate 在**上一个**脚本块里（那里没有 state）。
+     第一版把它们写进了上一个块，结果是"视图切了、hash 没写"，而且不报错 —— 
+     因为 activate 里那句引用没定义的名字，只抛一次 ReferenceError 就被吞在事件回调里。 */
+  window.__paperId = () => (state.paper ? state.paper.id : '');
+
+  window.__openDeepPaper = (id) => {
+    // 库还没就绪时先记下，loadPapers 完成后再来一次
+    if (!state.papers || !state.papers.length) { deepPending = id; return; }
+    if (!state.papers.some((p) => p.id === id)) {
+      showNote(`链接里的文献不在库里（${id}），可能已被删除`, 'error');
+      return;
+    }
+    if (state.paper && state.paper.id === id) return;
+    openPaper(id).catch(() => {});
+  };
+
+  /** 阅读器停在某一篇上时，把地址栏换成可分享的 `#reader/<id>`。
+      用 replaceState 而不是 pushState：翻文献不该污染后退历史。 */
+  function syncReaderHash() {
+    if (!state.paper) return;
+    const active = document.querySelector('section.view.active');
+    if (!active || active.id !== 'view-reader') return;
+    const target = `#reader/${state.paper.id}`;
+    if (location.hash !== target) history.replaceState(null, '', target);
+  }
+
   async function openPaper(id) {
     // 换文献：上一份的图表清单、计数和"还没解析"标记都得一起清掉，
     // 否则切到图表栏看到的是别人的表
@@ -2455,6 +2502,7 @@ svg{width:100%;height:auto;display:block}
           `已载入《${state.paper.title}》：共 ${state.paper.chunks} 个块。可就任意细节提问，结论均回原文核验。`),
         qaEgRow(),
       );
+      syncReaderHash();          // 地址栏换成可分享的 #reader/<id>
     } catch (err) {
       showNote(`打开文献失败：${err.message}`, 'error');
     }
