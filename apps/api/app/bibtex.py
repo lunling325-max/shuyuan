@@ -79,6 +79,30 @@ def _surname(authors: str) -> str:
     return words[0] if len(words) == 1 else words[-1]
 
 
+def _bibtex_authors(authors: str) -> str:
+    """把 PDF 里那种作者串转成 BibTeX 认的 `A and B and C`。
+
+    为什么必须转：BibTeX 用 **`and`** 分隔作者，用**逗号**表示"姓, 名"。
+    直接把 `Jimmy Lei Ba, Jamie Ryan Kiros, and Geoffrey E Hinton` 塞进 author 字段，
+    它会读成「两个作者」：第一个叫 `Jimmy Lei Ba`（当姓）、名字是 `Jamie Ryan Kiros` ——
+    用 pandoc 的 citeproc 实测渲染出来是「(Jimmy Lei Ba and Hinton 2016)」，名字全乱。
+
+    两种排版分别处理：
+    - 带分号的 `Vaswani, Ashish; Shazeer, Noam` 本身已经是"姓, 名"，分号切完用 and 连；
+    - 只有逗号的 `A, B, and C` 是 PDF 的列举写法，逗号切完用 and 连 ——
+      每个 `First Last` 让 BibTeX 自己把最后一个词当姓，这是它默认的规则。
+    """
+    text = " ".join((authors or "").split())
+    if not text:
+        return ""
+    if ";" in text:
+        parts = [p.strip() for p in text.split(";")]
+    else:
+        parts = [p.strip() for p in re.split(r",\s*(?:and\s+)?", text)]
+    names = [p for p in parts if p and p not in {"and", "et al", "et al."}]
+    return " and ".join(names)
+
+
 def _key(ref, used: set[str]) -> str:
     """生成引用键：`姓 + 年 + 标题第一个实词`，重复时加 a/b/c。"""
     parts = [_surname(ref.authors), re.sub(r"\D", "", ref.year or "")]
@@ -113,8 +137,9 @@ def _fields(ref) -> list[tuple[str, str]]:
     """按类型挑字段名：期刊写 `journal`，会议写 `booktitle`，其余写 `howpublished`。"""
     kind = _entry_type(ref)
     fields: list[tuple[str, str]] = []
-    if ref.authors:
-        fields.append(("author", escape(ref.authors)))
+    authored = _bibtex_authors(ref.authors)
+    if authored:
+        fields.append(("author", escape(authored)))
     if ref.title:
         fields.append(("title", escape(ref.title)))
     if ref.year:

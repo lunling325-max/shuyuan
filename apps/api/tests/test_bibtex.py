@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from app.bibtex import escape, to_bibtex
+from app.bibtex import _bibtex_authors, escape, to_bibtex
 from app.references import Reference
 
 
@@ -86,6 +86,22 @@ def test_unparsed_entry_is_exported_with_a_note_instead_of_dropped():
 def test_empty_reference_list_says_so_instead_of_returning_an_empty_file():
     body = to_bibtex([])
     assert "没有解析出可导出的参考文献条目" in body
+
+
+def test_author_list_is_converted_to_bibtex_and_form():
+    """`A, B, and C` 必须变成 `A and B and C`。
+
+    不转的话 BibTeX 会把「逗号」当成"姓, 名"的分隔：整串读成两个作者，
+    第一个的姓是 `Jimmy Lei Ba`、名是 `Jamie Ryan Kiros`。用 pandoc 的 citeproc
+    实测渲染出 "Jimmy Lei Ba and Hinton 2016" —— 名字全乱。转完是 "Ba et al. 2016"。
+    """
+    assert _bibtex_authors("Jimmy Lei Ba, Jamie Ryan Kiros, and Geoffrey E Hinton") ==         "Jimmy Lei Ba and Jamie Ryan Kiros and Geoffrey E Hinton"
+    # 「姓, 名; 姓, 名」的排版：分号切完用 and 连，逗号要保留（那是姓名的分隔）
+    assert _bibtex_authors("Vaswani, Ashish; Shazeer, Noam") == "Vaswani, Ashish and Shazeer, Noam"
+    assert _bibtex_authors("Francois Chollet") == "Francois Chollet"
+    assert _bibtex_authors("") == ""
+    # "et al" 不是作者，丢掉
+    assert _bibtex_authors("A. Author, B. Author, et al") == "A. Author and B. Author"
 
 
 def test_arxiv_id_becomes_eprint_fields():

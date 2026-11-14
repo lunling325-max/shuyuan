@@ -193,13 +193,13 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 ## 测试
 
 ```bash
-cd apps/api && uv run pytest -q     # 571 项
+cd apps/api && uv run pytest -q     # 572 项
 ```
 
 其中一部分用例要读真实的演示论文（`pdf/` 不进仓库，见 `.gitignore`，7 份约 43 MB；
 用例按文件名找，需要哪几个写在各测试模块顶部的路径常量里）。
 没有这些文件时它们会 **skip 并写明缺哪个文件**，不会整片变红：从零 clone 下来实测
-`241 passed, 330 skipped`；把 PDF 放进仓库根的 `pdf/` 之后是 `571 passed`。
+`241 passed, 330 skipped`；把 PDF 放进仓库根的 `pdf/` 之后是 `572 passed`。
 
 覆盖：切块的边界条件、BM25 排序与单复数归并、RRF 去重、守卫的三级匹配、
 Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资料库恢复、
@@ -282,7 +282,7 @@ E-038 之后界面是十二个视图（新增「跨文献对比」）。
 | 文件 | 内容 |
 |---|---|
 | [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 16 张实机截图与创新点说明（PDF 29 页，`build/TECH.pdf`） |
-| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 48 篇实验记录（E-001–E-048），每条带实测数字 |
+| [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 49 篇实验记录（E-001–E-049），每条带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | **五分钟验收清单**：点哪里 → 该看到什么 → 看不到意味着什么（给评审或临时接手的人） |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑、回滚标签与对策） |
