@@ -98,6 +98,9 @@
 **注意**：arXiv 与 Zenodo 的接口不提供被引数，它们的条目**不显示**被引 ——
 不是 0。筛选到 0 条时有一段说明，而不是空白。
 
+（另：阅读器右栏「参考文献」页顶部有「**导出 BibTeX**」，点了会下载 `.bib`，
+可以直接丢进 Zotero / Overleaf。）
+
 ---
 
 ## 6. 每日推荐 + 订阅追踪（60 秒）
@@ -153,7 +156,7 @@
 
 ## 10. 如果要做更硬的验证
 
-- `cd apps/api && uv run pytest -q` —— 560 项；没有演示 PDF 时自动跳过并写明缺哪个文件；
+- `cd apps/api && uv run pytest -q` —— 570 项；没有演示 PDF 时自动跳过并写明缺哪个文件；
 - `uv run python scripts/eval_qa.py` —— 24 题人工标注集，重算引用准确率（会走模型，有额度成本）；
 - `uv run python scripts/eval_retrieval.py` —— 18 题检索评测，可冻结模型改写结果做对比。
 

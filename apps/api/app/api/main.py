@@ -65,6 +65,7 @@ from app.api.schemas import (
     StatsOut,
 )
 from app.rag.answer import answer_question
+from app.bibtex import to_bibtex
 from app.rag.bilingual import translate_chunk
 from app.rag.copilot import build_outline
 from app.rag.query import expand_query, retrieve
@@ -413,6 +414,34 @@ def list_references(paper_id: str) -> list[ReferenceOut]:
     """
     paper = _get(paper_id)
     return [ReferenceOut.of(r) for r in paper.references]
+
+
+@app.get("/api/papers/{paper_id}/bibtex")
+def paper_bibtex(paper_id: str) -> Response:
+    """把这篇的参考文献导出成 .bib —— 拿到就能丢进 Zotero / Overleaf。
+
+    解析不出标题的条目照样导出（`note` 里写明字段不全）：丢条目比给残缺条目更难发现。
+    """
+    paper = _get(paper_id)
+    body = to_bibtex(paper.references, source=paper.title)
+    return Response(
+        content=body,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{paper_id}.bib"'},
+    )
+
+
+@app.get("/api/bibtex")
+def library_bibtex() -> Response:
+    """整个文献库的 .bib：写综述时一次性把这十几篇的引用都拿到。"""
+    papers = registry.all()
+    refs = [ref for paper in papers for ref in paper.references]
+    body = to_bibtex(refs, source=f"文献库 {len(papers)} 篇")
+    return Response(
+        content=body,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="library.bib"'},
+    )
 
 
 @app.get("/api/papers/{paper_id}/bilingual", response_model=BilingualOut)

@@ -2586,6 +2586,22 @@ svg{width:100%;height:auto;display:block}
     // 扫描件的参考文献标题同样来自 OCR：translatc / statistica 这种残渣
     // 会被当成"标题里有错别字"，得先说清是识别误差，不是解析器读错了
     const head = state.paper && state.paper.scanned ? [scannedNote()] : [];
+    // 导出 BibTeX：参考文献解析得再好，用户要的也是"能直接引用"。
+    // 用 <a download>，不走 JS：后端已经带了 Content-Disposition，浏览器自己存盘最省事。
+    if (state.paper) {
+      // 注意：`.bar` 的 flex 只写在 .retrieve / .review 下面，右栏里它是普通块，
+      // 所以布局样式直接写在元素上，否则按钮会挤进正文中间（实测撞过）
+      head.push(el('div', {
+        style: 'display:flex;align-items:center;gap:8px;margin:0 0 8px',
+      },
+      el('span', { class: 'note', style: 'margin:0;flex:1;min-width:0' },
+        `${refs.length} 条 · 可直接放进 Zotero / Overleaf`),
+      el('a', {
+        class: 'btn', style: 'flex:none', download: `${state.paper.id}.bib`,
+        href: `${API}/papers/${state.paper.id}/bibtex`,
+        title: '解析不出标题的条目也会导出，并在 note 里说明字段不全',
+      }, '导出 BibTeX')));
+    }
     box.replaceChildren(...head, ...refs.map((r) => clickable(el('div', {
       class: 'refrow', 'data-key': r.key,
     },

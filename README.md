@@ -165,6 +165,7 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 | POST | `/api/review` | 综述 + Future Work：多查询扩展召回，参考文献表与目录页永不进证据 |
 | GET | `/api/recommend` | arXiv 最新提交 × 本地库相关性 × 开源代码的推荐，带逐条推荐理由；`?fresh=true` 绕过 15 分钟缓存 |
 | POST | `/api/recommend/vote` | 点赞/踩（再投同一票=取消），按用户分开落盘 |
+| GET | `/api/papers/{id}/bibtex` | 该篇参考文献导出 BibTeX；`/api/bibtex` 导整个库（1257 条实测 307 KB） |
 | GET / POST | `/api/tracking` | arXiv 订阅：列表 / 新建（关键词 + 分类 + 间隔）；`/{id}/run` 立即抓取、`/run` 跑到期的、`/ack` 标记已读 |
 | GET | `/api/tools/search` | 多来源检索：arXiv / OpenAlex / Crossref / Semantic Scholar / Zenodo 并发查、跨站去重，每站各自 `degraded`，`?sources=` 选站；每条带 `citations` 与 `citations_source`（0 = 这个站没给数，不是没人引） |
 | GET | `/api/tools/arxiv/search` | 只查 arXiv（断网时 `degraded=true`，不报 500） |
@@ -192,13 +193,13 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 ## 测试
 
 ```bash
-cd apps/api && uv run pytest -q     # 560 项
+cd apps/api && uv run pytest -q     # 570 项
 ```
 
 其中一部分用例要读真实的演示论文（`pdf/` 不进仓库，见 `.gitignore`，7 份约 43 MB；
 用例按文件名找，需要哪几个写在各测试模块顶部的路径常量里）。
 没有这些文件时它们会 **skip 并写明缺哪个文件**，不会整片变红：从零 clone 下来实测
-`231 passed, 329 skipped`；把 PDF 放进仓库根的 `pdf/` 之后是 `560 passed`。
+`241 passed, 329 skipped`；把 PDF 放进仓库根的 `pdf/` 之后是 `570 passed`。
 
 覆盖：切块的边界条件、BM25 排序与单复数归并、RRF 去重、守卫的三级匹配、
 Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资料库恢复、
