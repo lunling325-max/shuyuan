@@ -4585,3 +4585,52 @@ README 与 DEPLOY.md 都写着「`seed_demo.py` 幂等、可反复跑」。**"�
   与 `URLError` 的脚本，在"服务端主动掐连接"这一种情况下一定会漏。
 - **"幂等"要连过程一起验。** 库里篇数没变不等于脚本跑成功了。
 
+## E-054 · 脚本冒烟 + 复跑 OCR 那一张表：召回和精度印反了
+
+### 一、脚本冒烟：19 个里 9 个 `--help` 会报错
+
+`for s in scripts/*.py; do python $s --help; done` 的结果：
+
+| 结果 | 脚本 | 说明 |
+|---|---|---|
+| OK（10 个） | `ask` `check_jump` `eval_glossary_holdout` `eval_qa` `eval_retrieval` `ingest_papers` `make_scan_sample` `measure_crosslinks` `seed_demo` `shoot` | 有 argparse，`--help` 说人话 |
+| 需要真参数（7 个） | `dedup_probe` `eval_ocr` `normalize_probe` `similarity_curve` `summarize_diff` `version_diff` `measure_scale` `pick_papers` | 用位置参数、没接 argparse；`--help` 被当成文件名或页码，直接抛异常 |
+| 需要 key / 服务（2 个） | `demo_guardrail`（要 DEEPSEEK_API_KEY）、`measure_scale`/`pick_papers`（要服务在跑） | 不是缺陷，是它本来就该在这种条件下跑 |
+
+**哪些要紧**：README 与 TECH 里点名给过命令的只有 `eval_ocr.py 5 72` 和
+`eval_retrieval.py --dense/--hybrid` —— 这两条按**文档里的写法**都能跑通（见下）。
+其余那几个是开发期的探针，进不了文档。所以这轮**不改代码**，但把结论记下来：
+下次谁想给脚本加 `--help`，先分清哪几个是"给人用的"。
+
+### 二、按文档原样跑，两条都对
+
+```
+python scripts/eval_retrieval.py --dense      → Hit@1 12/18 = 66.7%，Hit@3 16/18 = 88.9%
+python scripts/eval_ocr.py 5 72               → 词级 F1 0.866 · 完全命中 90.6% · 召回 85.8% · 认错 9.2%
+```
+
+两条都与文档里的数字对得上。**但对照的过程中发现一处印反了。**
+
+### 三、TECH 那张 OCR 表：召回与精度两列是反的
+
+`eval_ocr.py` 打印的是「完全命中 / 召回 / 粘连 / 认错」；TECH §5.1 把「完全命中」
+改叫「精度」，这没问题（它就是 matched / OCR 输出的词数），**但把它放在了"召回"那一列**。
+今天两侧都跑了一遍：
+
+| dpi | 脚本输出 | TECH 原来写的 |
+|---|---|---|
+| 60 | 完全命中 85.8% · 召回 83.4% | 召回 **85.8%** · 精度 **83.4%** |
+| 72 | 完全命中 90.6% · 召回 85.8% | 召回 **90.6%** · 精度 **85.8%** |
+
+七行的数值本身都对，只有两列的表头互换。已把表头改成「精度 | 召回」，
+数值不动 —— 这样 90.6% 落在精度、85.8% 落在召回，与脚本一致。
+`EXPERIMENTS.md` 里那张表用的是脚本自己的词（完全命中/召回），本来就是对的，没动。
+
+### 四、记一笔
+
+- **"数字对得上"和"标签对得上"是两件事。** 表里七个 F1、七个粘连率、七个错误率都对，
+  唯独两列表头反了 —— 只对数不看标签，就永远发现不了。
+- **冒烟测试要看"这个脚本是给谁用的"。** 十个带 `--help` 的里有一个是要 key 的，
+  它报错是对的；七个没接 argparse 的是开发探针，进不了文档，也不必改。
+- **文档里的命令要按文档的写法跑一遍。** 这次两条都跑通了，才发现表格里那处反了。
+
