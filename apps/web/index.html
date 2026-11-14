@@ -2494,22 +2494,48 @@ svg{width:100%;height:auto;display:block}
       索引里孤立成词的标点（`heads - dozens` 的那个连字符）不产生 token，
       回显时就被跳过了，于是整句 indexOf 落空、跳过来一点高亮都没有 ——
       看上去像"这条引用没有被校验过"。退到前缀当然不完美，但比什么都没有诚实。 */
+  /** 引文在正文里的**最长可命中前缀长度**（两边都已小写、已折叠空白）。
+
+      为什么需要它：引文来自词级索引，索引不产出"孤立标点"的 token ——
+      原文 `h = 8` 在引文里是 `h 8`，整句 indexOf 必然落空。找块与高亮用的是同一个判据，
+      否则会出现"跳到了正确的块、却一个字都没高亮"或反过来。 */
+  function prefixHitLen(hay, needle) {
+    if (!hay || !needle) return 0;
+    if (hay.includes(needle)) return needle.length;
+    let lo = 0;
+    let hi = needle.length;          // 二分：前缀能找到，更短的必然能找到
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (hay.includes(needle.slice(0, mid))) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }
+
   function highlightSpan(flat, highlight) {
     if (!highlight) return [-1, -1];
     const hay = flat.toLowerCase();
     const needle = highlight.toLowerCase();
     const at = hay.indexOf(needle);
     if (at >= 0) return [at, at + needle.length];
-    let lo = 0;
-    let hi = needle.length;          // 二分找最长前缀：前缀能找到，更短的必然能找到
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (hay.includes(needle.slice(0, mid))) lo = mid;
-      else hi = mid - 1;
+    let len = prefixHitLen(hay, needle);
+    if (len < 12) return [-1, -1];   // 太短就没有定位价值，标错位置比不标更糟
+    const start = hay.indexOf(needle.slice(0, len));
+    // 前缀止步的地方，hay 里多半夹着引文丢掉的符号（`h = 8` 的 `=`）。
+    // 往后对齐着走：hay 多出来的非字母数字可以跳过，对得上就继续 ——
+    // 这样高亮能盖住整句，而不是停在"…employ h"。
+    let hi = start + len;
+    let ni = len;
+    let skips = 0;                   // 连续跳过的最多 3 个字符：再多就不是"符号差异"了
+    while (ni < needle.length && hi < hay.length && skips <= 3) {
+      if (hay[hi] === needle[ni]) { hi += 1; ni += 1; skips = 0; continue; }
+      // hay 这一位是符号或多余的空格，而引文这一位是词字符 —— 说明是索引把符号吞了
+      if (!/[a-z0-9]/i.test(hay[hi]) && /[a-z0-9]/i.test(needle[ni])) {
+        hi += 1; skips += 1; continue;
+      }
+      break;
     }
-    if (lo < 12) return [-1, -1];    // 太短就没有定位价值，标错位置比不标更糟
-    const start = hay.indexOf(needle.slice(0, lo));
-    return [start, start + lo];
+    return [start, Math.max(hi, start + len)];
   }
 
   function bodyNodes(flat, highlight) {
@@ -3037,12 +3063,29 @@ svg{width:100%;height:auto;display:block}
   }
 
   /** 从锚点跳回原文：找到包含该页的块，并把引用原句高亮出来。 */
+  /** 引文落在哪一块：先在这一页的块里挑，再放宽到全篇；都找不到才退回"按页码取第一块"。
+
+      判据是**最长可命中前缀**而不是整句命中：引文里 `h 8` 对应原文 `h = 8`（索引不产出
+      孤立标点），要求整句命中就一定落空，落空就退回按页码找块 —— 于是跳到同一页的第一个块：
+      页对、节错、一个字都没高亮（实测撞过：h=8 那句在 §3.2.2，却跳到了 §3.2.1）。 */
+  function chunkForAnchor(page, quote) {
+    const sq = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const probe = sq(quote);
+    const best = (list) => list.reduce((acc, c) => {
+      const len = prefixHitLen(sq(c.text), probe);
+      return len > acc.len ? { chunk: c, len } : acc;
+    }, { chunk: null, len: 0 });
+    const onPage = state.chunks.filter((c) => page >= c.page_start && page <= c.page_end);
+    const here = best(onPage);
+    if (here.chunk && here.len >= 12) return here.chunk;
+    const anywhere = best(state.chunks);
+    if (anywhere.chunk && anywhere.len >= 20) return anywhere.chunk;
+    return onPage[0] || null;
+  }
+
   function gotoAnchor(page, quote) {
     goTo('reader');
-    const hit = state.chunks.find(
-      (c) => page >= c.page_start && page <= c.page_end
-        && c.text.toLowerCase().includes(quote.toLowerCase().slice(0, 40)),
-    ) || state.chunks.find((c) => page >= c.page_start && page <= c.page_end);
+    const hit = chunkForAnchor(page, quote);
     if (hit) {
       renderChunk(hit, quote);
       syncOutline(hit);
@@ -3054,9 +3097,7 @@ svg{width:100%;height:auto;display:block}
   function anchorBlock(anchor) {
     // 先按引用原句找块，再退回按页码 —— 同一页上往往有好几节，
     // 只按页码会把 3.2.1 的引用挂到 3.2 名下（页对、节错，一样会误导人）
-    const probe = anchor.source_text.toLowerCase().slice(0, 40);
-    const sec = state.chunks.find((c) => c.text.toLowerCase().includes(probe))
-      || state.chunks.find((c) => anchor.page >= c.page_start && anchor.page <= c.page_end);
+    const sec = chunkForAnchor(anchor.page, anchor.source_text);
     return el('div', { class: 'cite' },
       el('div', { class: 'top' },
         el('span', { class: 'pg' }, `p.${anchor.page}`),
