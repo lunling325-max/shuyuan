@@ -3763,9 +3763,23 @@ svg{width:100%;height:auto;display:block}
     if (!chunk) return;
     const zh = CMP.data && CMP.data.paragraphs.map((p) => p.zh) || [];
     const en = splitParas(chunk.text);
-    const lines = [`# ${chunk.section}`, '', `> p.${chunk.page_start}`, ''];
+    const missing = en.filter((_, i) => !zh[i]).length;
+    // 以前是"英文一段、空行、中文一段"这么交替写，没有任何标注 —— 读者分不清哪行是译文，
+    // 而人名/邮箱这类"译了等于没译"的段落两行完全一样，看上去像文件被复制了两遍。
+    // 现在每段显式标「原文 / 译文」，并在开头交代段数与缺译情况。
+    const lines = [
+      `# ${chunk.section}`,
+      '',
+      `> p.${chunk.page_start}${chunk.page_end && chunk.page_end !== chunk.page_start ? '-' + chunk.page_end : ''}`,
+      '',
+      `原文 ${en.length} 段，译文 ${en.length - missing} 段${missing ? `（${missing} 段未取得译文）` : ''}。`,
+      '每段先「原文」后「译文」；术语、公式与引用标号按原样保留。',
+      '',
+    ];
     en.forEach((p, i) => {
-      lines.push(p, '', zh[i] || '_（未翻译）_', '');
+      const flatEn = p.replace(/\s+/g, ' ').trim();
+      const flatZh = (zh[i] || '').replace(/\s+/g, ' ').trim();
+      lines.push(`**原文**　${flatEn}`, '', `**译文**　${flatZh || '_（未翻译）_'}`, '', '---', '');
     });
     const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
     const a = el('a', { href: URL.createObjectURL(blob), download: `对照-${chunk.section.split('›').pop().trim()}.md` });
