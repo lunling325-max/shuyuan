@@ -4461,3 +4461,66 @@ grep -oE 'url\([^)]*\)' apps/web/index.html                 # 只有 url(#g-arro
   否则"复跑过了"会被听成"全部复跑过了"。
 - **"断网可用"是可以被验证的**，不是一句态度：grep 一遍外链就够了。
 
+## E-052 · 不启 Docker 也能验的两件事：镜像里的文件够不够、部署包里夹带了什么
+
+### 一、能验什么、不能验什么
+
+Docker Desktop 的守护进程没起（`npipe:////./pipe/dockerDesktopLinuxEngine` 连不上），
+所以"构建镜像"这一步仍然没法验。但构建之前有两件事是可以静态或离线验的：
+
+1. **Dockerfile 的 `COPY` 清单够不够**——少拷一个目录，容器起来就报 ImportError / 404；
+2. **部署包里夹带了什么**——`deploy_remote.sh` 打的那个 tar，会不会把 PDF、数据或密钥送上服务器。
+
+### 二、第一件：按 COPY 清单拼一份"像镜像一样的目录"，然后真跑
+
+Dockerfile 的运行时层只 `COPY` 三样：`.venv`、`apps/api/app`、`apps/web`。
+于是照这三样（venv 用本机的）拼了一个目录，直接在里面起应用：
+
+```
+health:     200 {'ok': True, 'papers': 0, 'llm_configured': False}
+index.html: 200 292581 B
+papers / tracking / bibtex: 200 / 200 / 200
+WEB_DIR:   ...\image-simpppps\web          ← 对
+STORE_DIR: ...\image-simpp\data\papers       ← 对
+```
+
+**结论：COPY 清单是完整的。** 顺带验了那条最容易出错的分层约定 ——
+`deps.py` 用 `parents[4]` 推仓库根，镜像里 `/app/apps/api/app/api/deps.py` 的
+`parents[4]` 正好是 `/app`；要是源码放进 `/app/app`，`WEB_DIR` 与 `data/papers` 会一起指错。
+
+### 三、第二件：照着 `deploy_remote.sh` 的原命令打一次 tar
+
+```
+201 个文件 / 11 MB
+命中"敏感或大文件"模式的只有 .env.example（这是构建需要的，应该带）
+没有 .env、没有 *.pdf、没有 data/、没有 models/、没有 __pycache__
+```
+
+构建需要的八项全在：`Dockerfile`、`docker-compose.yml`、`.dockerignore`、`.env.example`、
+`apps/api/pyproject.toml`、`apps/api/uv.lock`、`apps/api/app/api/main.py`、`apps/web/index.html`。
+
+注意 `.dockerignore` 会把 `scripts` / `docs` / `*.md` **挡在镜像外**，但 tar **照送** ——
+这是有意的：服务器上要能看文档，镜像是另一回事。
+
+### 四、顺带静态读了一遍运行时层
+
+| 项 | 写法 | 为什么值得记 |
+|---|---|---|
+| 非 root | `useradd --uid 10001 appuser` + `USER appuser` | 与 DEPLOY.md 里"数据卷属主 chown 10001"是同一条链 |
+| 数据不进镜像 | `VOLUME ["/app/data"]` | 镜像里不固化用户上传的 PDF |
+| 健康检查不装 curl | `HEALTHCHECK CMD python -c "urllib.request.urlopen(...)"` | slim 镜像没有 curl，少装一个包少一处攻击面 |
+| 信号能送达 | `CMD ["sh","-c","exec uvicorn ..."]` | `exec` 让 uvicorn 成为 PID 1，`docker stop` 的 SIGTERM 才落到它身上 |
+| 端口可换 | `${PORT:-8017}` 在 CMD 里展开 | 应用代码不解析 PORT，所以必须由启动命令传 |
+
+### 五、仍然没验的
+
+- **镜像能不能构建成功**：要 Docker Desktop 起来；
+- **镜像体积**：文档里写着"预计 250–350 MB（未构建验证）"——现在还是这句，没升级成结论。
+
+### 记一笔
+
+- **"没法整体验"不等于"什么都不能验"。** 把镜像的文件集单独拼出来跑一遍，就验掉了
+  构建失败里最常见的一类（少拷/放错层级），而且不依赖任何守护进程。
+- **部署包的检查要双向：该带的带了、不该带的没带。** 前者漏了是启动失败，后者漏了是
+  把 PDF 或密钥送上服务器 —— 后者的代价更大，却不常被查。
+
