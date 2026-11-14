@@ -54,6 +54,24 @@ uv run uvicorn app.api.main:app --reload --port 8017
 - 演示深链：`/?paper=<文献 id>&ask=<问题>` 直接打开某篇并提问
 - 想跑 Docker：见下方「部署与运行（Docker）」，一条 `docker compose up --build -d`
 
+## 技术架构
+
+一句话：**单进程、磁盘即数据库**。浏览器只跟一个 FastAPI 进程打交道，它同时托管前端静态文件；
+没有数据库、没有消息队列、没有前端构建步骤。
+
+| 层 | 位置 | 职责 |
+|---|---|---|
+| 前端 | `apps/web/index.html`（单文件，无构建） | 11 个视图，原生 JS |
+| 接口 | `apps/api/app/api/routers/` | 每块功能一个 `APIRouter`，共享注册表在 `deps.py` |
+| 解析 | `apps/api/app/parsing/` | 切块、扫描件 OCR、表格 / 插图 / 公式还原 |
+| 检索 | `apps/api/app/retrieval/` | BM25 + 单复数归并 + 检索词扩展 + RRF（向量通道可选） |
+| 生成与校验 | `apps/api/app/rag/` + `guardrails/` | 模型只写结论；引用由服务端校验并回填页码与 bbox |
+| 编排 | `apps/api/app/agent/` | 两阶段规划 + 10 个工具，参数逐个过 Pydantic |
+| 存储 | `data/papers/*.pdf` + `*.json` | PDF、sidecar、OCR/图表/公式/订阅等缓存 |
+
+取舍与实测见 [docs/TECH.md](docs/TECH.md) 第 2 章；为什么不用 Next.js / LangGraph / PostgreSQL，
+一张表写在第 2.2 节。
+
 ## 界面
 
 全部截图由 CDP 驱动真实浏览器拍下（`scripts/shoot.py`），不是设计稿。

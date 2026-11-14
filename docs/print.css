@@ -19,7 +19,7 @@
  *   中文字体也由系统提供，不用配 CJK 宏包。
  */
 
-@page { size: A4; margin: 18mm 16mm; }
+@page { size: A4; margin: 15mm 14mm; }
 
 body {
   font-family: "PingFang SC", "Microsoft YaHei", "Source Han Sans SC", system-ui, sans-serif;
@@ -33,8 +33,8 @@ h1 { font-size: 20pt; border-bottom: 2px solid #2a78d6; padding-bottom: 6px; mar
 h2 { font-size: 14pt; margin-top: 18pt; page-break-after: avoid; color: #123c66; }
 h3 { font-size: 11.5pt; margin-top: 12pt; page-break-after: avoid; }
 
-table { border-collapse: collapse; width: 100%; font-size: 9pt; margin: 8pt 0; page-break-inside: avoid; }
-th, td { border: 1px solid #c8d0d8; padding: 3px 6px; text-align: left; vertical-align: top; }
+table { border-collapse: collapse; width: 100%; font-size: 8.6pt; margin: 7pt 0; page-break-inside: avoid; }
+th, td { border: 1px solid #c8d0d8; padding: 2px 5px; text-align: left; vertical-align: top; }
 th { background: #eef3f9; font-weight: 700; }
 
 code { background: #f1f4f8; padding: 1px 4px; border-radius: 3px; font-size: 9pt; }
@@ -52,5 +52,5 @@ blockquote {
 hr { border: 0; border-top: 1px solid #dde4ea; margin: 14pt 0; }
 
 /* 截图：整幅宽度、不跨页断开，图注紧跟图下方且不单独落到下一页 */
-img { max-width: 100%; height: auto; display: block; margin: 8pt auto 4pt; page-break-inside: avoid; }
+img { max-width: 94%; height: auto; display: block; margin: 7pt auto 3pt; page-break-inside: avoid; }
 img + em, p > em:only-child { display: block; font-size: 8.5pt; color: #4a5a6a; margin: 0 0 10pt; }
