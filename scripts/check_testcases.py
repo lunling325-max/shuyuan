@@ -61,7 +61,9 @@ def main(argv: list[str] | None = None) -> int:
     print("-" * 68)
     missing = 0
     for name, ok, why in checks:
-        print(f"{'✓' if ok else '✗'} {name:<26} {'就绪' if ok else '缺失'}")
+        # 用 ASCII 记号：Windows 控制台是 GBK，✓/✗ 会抛 UnicodeEncodeError，
+        # 于是"检查通过"被脚本判成"检查失败"，误报素材不全（真踩过）
+        print(f"{'[OK] ' if ok else '[缺失]'} {name:<26} {'就绪' if ok else '缺失'}")
         if not ok:
             missing += 1
             print(f"    需要：{why}")

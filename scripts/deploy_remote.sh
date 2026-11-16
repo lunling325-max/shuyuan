@@ -117,7 +117,7 @@ for i in $(seq 1 60); do
     # 健康检查只看"服务活着"，不看"赛题要的素材在不在"。
     # E-063 的教训：服务健康、本地四项齐全，线上却连 541 页教材都没有。
     say "覆盖核查：赛题 3.1 / 3.2 的四份素材"
-    if python3 "$ROOT/scripts/check_testcases.py" --server "http://$HOST:$PORT" 2>/dev/null         || python "$ROOT/scripts/check_testcases.py" --server "http://$HOST:$PORT"; then
+    if PYTHONIOENCODING=utf-8 python3 "$ROOT/scripts/check_testcases.py" --server "http://$HOST:$PORT" 2>/dev/null         || PYTHONIOENCODING=utf-8 python "$ROOT/scripts/check_testcases.py" --server "http://$HOST:$PORT"; then
       printf '
 素材齐全，可以按赛题逐项验收。
 '
