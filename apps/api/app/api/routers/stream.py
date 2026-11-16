@@ -70,6 +70,18 @@ from app.rag.streaming import (
 router = APIRouter()
 
 
+def _done_payload(t0: float, paper, trace: dict | None) -> dict:
+    """done 事件：耗时、是否扫描件，以及两级检索的过程量（未启用时都是 0）。"""
+    t = trace or {}
+    narrowed = bool(t.get("narrowed"))
+    return {
+        "took_ms": _took_ms(t0),
+        "scanned": paper.scanned,
+        "corpus_chunks": t.get("corpus", 0) if narrowed else 0,
+        "candidate_chunks": t.get("candidates", 0) if narrowed else 0,
+    }
+
+
 def _prepare(paper, req: QARequest):
     """检索与检索词扩展（同步、可能走网络），由路由丢进线程池执行。
 
@@ -77,6 +89,7 @@ def _prepare(paper, req: QARequest):
     再发 error —— 检索失败也不该表现成"连接被掐断"。
     """
     queries: list[str] = []
+    trace: dict = {}
     try:
         # retrieve 模式明确不调模型：不扩展，直接用原问题查库。
         if req.mode == "retrieve" or not req.expand:
@@ -89,11 +102,12 @@ def _prepare(paper, req: QARequest):
             k=req.k,
             expand=req.expand,
             queries=queries,
+            trace=trace,
         )
-        return queries, hits, None
+        return queries, hits, None, trace
     except Exception:  # noqa: BLE001 —— 检索/词法索引的异常类型不可枚举
         # 不把异常细节发给前端：可能含内部路径或索引实现细节。
-        return queries or [req.question], [], ("retrieve", "检索阶段失败，请稍后重试")
+        return queries or [req.question], [], ("retrieve", "检索阶段失败，请稍后重试"), trace
 
 
 def _verify(paper, claims):
@@ -122,6 +136,7 @@ async def _event_stream(
     queries: list[str],
     hits: list,
     failure: tuple[str, str] | None,
+    trace: dict | None = None,
     t0: float,
     configured: bool,
 ) -> AsyncIterator[str]:
@@ -139,7 +154,7 @@ async def _event_stream(
 
     # 没有召回等价于只读检索：模型拿不到证据，硬答只会是幻觉。
     if req.mode == "retrieve" or not hits:
-        yield sse("done", {"took_ms": _took_ms(t0), "scanned": paper.scanned})
+        yield sse("done", _done_payload(t0, paper, trace))
         return
 
     # 可预判的失败在进入 token 流之前折叠成 error，HTTP 仍然是 200。
@@ -212,7 +227,7 @@ async def _event_stream(
     yield sse("claims", claims_payload(verified))
     # scanned 挂在 done 上而不是 claims 上：它是"这份文献本身"的属性，
     # 不是校验结果的一部分，前端拿到它才能提示"引文来自 OCR"
-    yield sse("done", {"took_ms": _took_ms(t0), "scanned": paper.scanned})
+    yield sse("done", _done_payload(t0, paper, trace))
 
 
 @router.post(
@@ -229,7 +244,7 @@ async def qa_stream(
     t0 = time.perf_counter()
 
     # 检索是同步的（可能还含一次模型调用），放线程池里跑，别堵事件循环。
-    queries, hits, failure = await run_in_threadpool(_prepare, paper, req)
+    queries, hits, failure, trace = await run_in_threadpool(_prepare, paper, req)
 
     # 在开始流之前就把"模型没配"识别掉：后面才能用事件而不是状态码表达。
     configured = bool(os.environ.get("DEEPSEEK_API_KEY"))
@@ -242,6 +257,7 @@ async def qa_stream(
             queries=queries,
             hits=hits,
             failure=failure,
+            trace=trace,
             t0=t0,
             configured=configured,
         ),

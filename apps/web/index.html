@@ -3408,7 +3408,7 @@ svg{width:100%;height:auto;display:block}
     body.replaceChildren();
     body.append(el('div', { class: 'q' }, question));
     body.append(el('div', { class: 'think' },
-      `检索 ${hits.length} 块${narrowNote(data)} · ${tookMs}ms · ` + verifyLine(stats, hits.length)));
+      `检索 ${hits.length} 块${narrowNote(state_)} · ${tookMs}ms · ` + verifyLine(stats, hits.length)));
     if (state_.scanned) body.append(scannedNote());
 
     if (!claims.length) {
@@ -3531,6 +3531,9 @@ svg{width:100%;height:auto;display:block}
           } else if (ev.event === 'done') {
             acc.tookMs = p.took_ms || 0;
             acc.scanned = Boolean(p.scanned);
+            // 两级检索的过程量：只有真的走了章节粗筛，后端才给非零值
+            acc.corpus_chunks = p.corpus_chunks || 0;
+            acc.candidate_chunks = p.candidate_chunks || 0;
             acc.done = true;
           } else if (ev.event === 'error') {
             // 半路挂了：已经流出来的 token 不能当结论，但证据块照样有用
