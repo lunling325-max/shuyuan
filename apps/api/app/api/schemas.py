@@ -73,6 +73,7 @@ class PaperOut(BaseModel):
         description="首页投稿戳上的日期 YYYY-MM-DD（≠ PDF 生成日期，arXiv GenPDF 不写元数据日期）",
     )
     scanned: bool = Field(default=False, description="首页没有文本层，内容来自 OCR")
+    abstract: str = Field(default="", description="摘要正文；认不出就是空串，不编")
     # 首页版面上认出来的作者与机构（赛题模块一要求"作者及机构信息"）。
     # 认不出就是空列表：扫描件首页没有文本层，这里宁可留空也不猜。
     authors: list[str] = Field(default_factory=list, description="首页版面认出的作者")

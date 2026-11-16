@@ -444,6 +444,16 @@ mark{
 }
 /* "本次检索到的原文块"每一行：节名会折行，分数必须留在同一行右侧，
    不然分数会被挤到下一行开头，看起来像另一条的编号 */
+/* 摘要条：默认两行，点「展开」看全文 —— 长摘要不该把正文挤下去 */
+.abstract{display:flex;gap:8px;align-items:baseline;margin:6px 0 0;
+  font-size:var(--fs-sm);color:var(--ink-2);line-height:1.6}
+.abstract .lbl{flex:none;color:var(--ink-3)}
+.abstract .body{flex:1;min-width:0;display:-webkit-box;-webkit-box-orient:vertical;
+  -webkit-line-clamp:2;overflow:hidden}
+.abstract.open .body{-webkit-line-clamp:unset;overflow:visible}
+.abstract .more{flex:none;background:none;border:0;padding:0;cursor:pointer;
+  color:var(--link);font:inherit}
+
 .evrow{display:flex;gap:8px;align-items:baseline}
 .evrow a{flex:1;min-width:0}
 .evrow .mono{flex:none;font-variant-numeric:tabular-nums}
@@ -845,6 +855,8 @@ svg{width:100%;height:auto;display:block}
       </div>
       <!-- 作者与机构单独一行：顶栏那行是 nowrap + 省略号，塞不下 -->
       <div class="sub writers" id="paper-writers"></div>
+      <!-- 摘要：模块一要求"细粒度抽取并结构化呈现"，此前只在章节树里出现过 -->
+      <div class="abstract" id="paper-abstract" hidden></div>
       <div class="page" id="page-body">
         <span class="pgmark" id="page-mark">—</span>
         <h4 id="page-title">请先在文献库选择一篇论文</h4>
@@ -1931,6 +1943,26 @@ svg{width:100%;height:auto;display:block}
       日期被截掉一半，而作者与机构本身也只剩个开头。单独一行能换行，信息是完整的。
       GPT-4 那种封面只印机构、不列人名的报告要写「机构 OpenAI」——
       裸写一个 OpenAI，读者会以为那是作者名。 */
+  /** 摘要：认不出就整块不出现（不写"暂无摘要"占位，那会让人以为解析失败）。 */
+  function renderAbstract(p) {
+    const box = $('paper-abstract');
+    if (!box) return;
+    const text = (p && p.abstract) || '';
+    box.hidden = !text;
+    box.classList.remove('open');
+    box.replaceChildren();
+    if (!text) return;
+    box.append(
+      el('span', { class: 'lbl' }, '摘要'),
+      el('span', { class: 'body' }, text),
+      el('button', { class: 'more', type: 'button',
+        on: { click: (e) => {
+          box.classList.toggle('open');
+          e.currentTarget.textContent = box.classList.contains('open') ? '收起' : '展开';
+        } } }, '展开'),
+    );
+  }
+
   function writerBlock(p) {
     const names = authorLine(p);
     const orgs = affiliationLine(p);
@@ -2445,6 +2477,7 @@ svg{width:100%;height:auto;display:block}
     if (state.paper) sel.value = state.paper.id;
     else if (state.papers[0]) sel.value = state.papers[0].id;
     $('paper-writers').textContent = state.paper ? writerBlock(state.paper) : '';
+    renderAbstract(state.paper);
     const meta = state.paper
       ? [
           `${state.paper.pages} 页`,

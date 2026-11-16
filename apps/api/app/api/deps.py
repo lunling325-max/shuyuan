@@ -71,6 +71,7 @@ def paper_out(p: Paper, dup: tuple[Paper, Relation] | None = None) -> PaperOut:
         scanned=p.scanned,
         authors=list(p.authors),
         affiliations=list(p.affiliations),
+        abstract=p.abstract,
     )
     if dup is not None:
         other, relation = dup

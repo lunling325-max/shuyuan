@@ -87,6 +87,60 @@ def _chunk(path: Path) -> list[Chunk]:
     return chunk_pdf(str(path), ocr=_ocr_hook())
 
 
+_ABSTRACT_SECTION = re.compile(r"^(abstract|summary|摘要)", re.IGNORECASE)
+
+
+def _strip_author_blob(text: str, authors, affiliations, title: str = "") -> str:
+    """把摘要开头粘着的「作者 / 机构 / 邮箱 / 标题连写 / 角标」一层层剥掉。
+
+    为什么是一轮循环而不是几步各跑一次：剥掉一个作者，后面常常又是下一个作者，
+    再后面是邮箱块、又是机构 —— 实测 v1 那份有 8 个作者 + 4 个机构 + 一组邮箱，
+    分步各跑一次只能剥掉最外面一层。
+
+    判据全部是"确定的事实"（已知名字、已知机构、标题本身、含 @ 的 token），
+    不做"这看起来像人名"这类猜测 —— 猜错会把摘要开头吃掉。
+    """
+    names = [n.strip() for n in (list(authors or []) + list(affiliations or []))
+             if n and n.strip()]
+    title_key = re.sub(r"\s+", "", (title or "")).lower()
+    for _ in range(40):
+        before = text
+        for name in names:
+            if text.startswith(name):
+                text = text[len(name):].lstrip(" ,;·-∗†‡*")
+        if title_key:
+            head = text.split(" ", 1)[0]
+            if head and re.sub(r"\s+", "", head).lower().startswith(title_key):
+                text = text[len(head):].lstrip(" ,;·-∗†‡*")
+        toks = text.split()
+        if toks and any(m in toks[0] for m in ("@", "{", "}", "∗", "†", "‡", "*")):
+            text = " ".join(toks[1:])
+        text = text.lstrip("∗†‡*·,; {")
+        if text == before:
+            break
+    return text
+
+
+def _abstract_of(chunks: list[Chunk], authors: list[str] | None = None,
+                 affiliations: list[str] | None = None, title: str = "") -> str:
+    """从切块里取摘要正文；没有就返回空串，**不要从别处凑一段**。
+
+    为什么从切块取而不是回版面再解析一遍：切块里的章节名已经由解析器认过，
+    这里再认一次等于把同一件事做两遍，两份结果还可能不一致。
+
+    `authors` 用来剥掉粘在摘要开头的人名：BERT 那份的版面把作者行并进了
+    Abstract 这一块，抽出来是 `Jacob Devlin Ming-Wei Chang … Google AI Language
+    We introduce a new language representation model…`。剥的判据只有一条 ——
+    **开头连续出现已知作者名**，多一个字都不动。
+    """
+    for chunk in chunks:
+        if _ABSTRACT_SECTION.match((chunk.section or "").strip()):
+            text = " ".join(chunk.text.split())
+            text = _strip_author_blob(text, authors, affiliations, title)
+            return text[:600]
+    return ""
+
+
 def _front_matter(path: Path):
     """作者与机构。解析出错就当没认出来 —— 它是加分项，不该让上传失败。"""
     from app.parsing.frontmatter import FrontMatter, extract_front_matter
@@ -158,6 +212,9 @@ class Paper:
     # 扫描件首页没有文本层，这里宁可不写，也不从别处猜一个机构填上去。
     authors: list[str] = field(default_factory=list)
     affiliations: list[str] = field(default_factory=list)
+    # 摘要：直接从切块里取（章节名命中 Abstract 的第一块），不从版面再猜一次。
+    # 解析器本来就认得这个标题，只是以前只拿它当"作者区块的右边界"，没留下来。
+    abstract: str = ""
     _index: TextIndex | None = field(default=None, repr=False)
     _bm25: BM25 | None = field(default=None, repr=False)
     _fingerprint: set[str] | None = field(default=None, repr=False)
@@ -338,9 +395,16 @@ class PaperRegistry:
                     affiliations=meta.get("affiliations")
                     if not no_front
                     else front.affiliations,
+                    # 摘要同样是后加的字段：老 sidecar 没有就地补算。
+                    # 从**已经切好的块**里取，不额外读版面 —— 启动时重建 15 篇也只多几毫秒。
+                    abstract=meta.get("abstract") or _abstract_of(
+                        chunks,
+                        meta.get("authors") if not no_front else front.authors,
+                        meta.get("affiliations") if not no_front else front.affiliations,
+                    ),
                 )
                 self._papers[paper.id] = paper
-                if no_front or (paper.title, paper.arxiv_version, paper.scanned, paper.arxiv_date) != (
+                if no_front or "abstract" not in meta or (paper.title, paper.arxiv_version, paper.scanned, paper.arxiv_date) != (
                     meta.get("title"),
                     meta.get("arxiv_version") or 0,
                     bool(meta.get("scanned", False)),
@@ -497,6 +561,7 @@ class PaperRegistry:
             scanned=self._is_scanned(path),
             authors=front.authors,
             affiliations=front.affiliations,
+            abstract=_abstract_of(chunks, front.authors, front.affiliations, title),
         )
         with self._lock:
             # 两个请求同时上传同一份文件时，先写入的那个胜出，后一个拿到同一对象，

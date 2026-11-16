@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from app.parsing.chunker import MAX_TOKENS, _boiler_key, chunk_pdf, extract_paras
+from app.parsing.chunker import Chunk, MAX_TOKENS, _boiler_key, chunk_pdf, extract_paras
 
 ROOT = Path(__file__).resolve().parents[3]
 PDF_V1 = ROOT / "pdf" / "1706.03762v1.pdf"
@@ -390,3 +390,35 @@ def test_false_headings_from_equations_and_captions_are_rejected(tmp_path):
     assert not any(s.startswith("1. This allows") for s in sections), sections
     # 真标题不能被误伤（块记录的是最深一级标题，所以这里是包含判断）
     assert any("Introduction" in s for s in sections), sections
+
+
+def test_abstract_is_extracted_without_author_prefix():
+    """摘要要能从切块里取出来，且不把作者名、机构名、邮箱块粘在开头。
+
+    实测四篇：Transformer 干净；BERT 那块把作者与邮箱并进了 Abstract；
+    GPT-4 开头是 `OpenAI∗`。剥的判据只有"已知名字/机构"与"邮箱块"两条。
+    """
+    from app.api.registry import _abstract_of
+
+    chunks = [
+        Chunk(index=0, text="Attention Is All You Need Ashish Vaswani Noam Shazeer",
+              section="Attention Is All You Need", page_start=1, page_end=1,
+              n_tokens=8, rects=()),
+        Chunk(index=1, text="The dominant sequence transduction models are based on complex networks.",
+              section="1 Introduction", page_start=2, page_end=2, n_tokens=10, rects=()),
+    ]
+    assert _abstract_of(chunks) == ""          # 没有 Abstract 块就返回空，不猜
+
+    chunks.insert(1, Chunk(index=9, text="Ashish Vaswani Noam Shazeer We propose a new model.",
+                           section="Abstract", page_start=1, page_end=1, n_tokens=9, rects=()))
+    got = _abstract_of(chunks, ["Ashish Vaswani", "Noam Shazeer"])
+    assert got == "We propose a new model.", got
+
+
+def test_abstract_strips_email_block():
+    from app.api.registry import _abstract_of
+
+    chunk = Chunk(index=0, section="Abstract", n_tokens=12, rects=(), page_start=1, page_end=1,
+                  text="Google AI Language {jacobdevlin,kentonl}@google.com We introduce BERT.")
+    got = _abstract_of([chunk], ["Jacob Devlin"], ["Google AI Language"])
+    assert got.startswith("We introduce BERT"), got
