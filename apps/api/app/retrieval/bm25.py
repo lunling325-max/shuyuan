@@ -91,13 +91,23 @@ class BM25:
         text = f"{chunk.section} {chunk.text}" if self._index_section else chunk.text
         return [stem(t) for t in split_tokens(text)]
 
-    def search(self, query: str, k: int = 5) -> list[Hit]:
+    def search(self, query: str, k: int = 5,
+               restrict: set[int] | None = None) -> list[Hit]:
+        """`restrict` 限定只在给定的块序号里打分 —— 两级检索的第二级用它。
+
+        `None` 表示全量检索（默认路径）；传空集合表示"没有候选"，直接返回空，
+        这一点很重要：调用方据此判断粗筛是否有效，而不是拿到一堆无关结果。
+        """
         terms = [stem(t) for t in split_tokens(query)]
         if not terms or not self.chunks:
+            return []
+        if restrict is not None and not restrict:
             return []
 
         scored: list[tuple[float, int]] = []
         for i, counts in enumerate(self._tf):
+            if restrict is not None and i not in restrict:
+                continue
             score = 0.0
             norm = self.k1 * (1 - self.b + self.b * self._len[i] / (self._avgdl or 1))
             for term in terms:

@@ -3222,6 +3222,13 @@ svg{width:100%;height:auto;display:block}
 
   /** 校验统计那一行。「0 通过 0 拦截」不是"护栏没工作"，是"没有可校验的结论"，
       两种意思必须分开写，否则演示时最容易被念成"你的护栏一条都没拦住"。 */
+  /** 长文档两级检索的说明：候选块数比全篇少，说明这次只扫了一小部分。 */
+  function narrowNote(data) {
+    const cand = data.candidate_chunks || 0;
+    const all = data.corpus_chunks || 0;
+    return cand && all && cand < all ? `（章节粗筛 ${cand}/${all}）` : '';
+  }
+
   function verifyLine(stats, evidenceCount = 0) {
     const s = stats || {};
     const total = (s.supported || 0) + (s.weak || 0) + (s.unsupported || 0);
@@ -3252,7 +3259,7 @@ svg{width:100%;height:auto;display:block}
     // 一条结论都没生成时，别写「通过 0 · 待确认 0 · 拦截 0」——
     // 那读起来像"护栏什么都没做"，其实是"这次没有可校验的东西"
     const think = el('div', { class: 'think' },
-      `检索 ${data.evidence.length} 块 · ${data.took_ms}ms · ` + verifyLine(data.stats, data.evidence.length));
+      `检索 ${data.evidence.length} 块${narrowNote(data)} · ${data.took_ms}ms · ` + verifyLine(data.stats, data.evidence.length));
     body.append(think);
     if (data.scanned) body.append(scannedNote());
 
@@ -3401,7 +3408,7 @@ svg{width:100%;height:auto;display:block}
     body.replaceChildren();
     body.append(el('div', { class: 'q' }, question));
     body.append(el('div', { class: 'think' },
-      `检索 ${hits.length} 块 · ${tookMs}ms · ` + verifyLine(stats, hits.length)));
+      `检索 ${hits.length} 块${narrowNote(data)} · ${tookMs}ms · ` + verifyLine(stats, hits.length)));
     if (state_.scanned) body.append(scannedNote());
 
     if (!claims.length) {

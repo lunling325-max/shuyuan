@@ -49,6 +49,9 @@ class AnswerOut(BaseModel):
     evidence: list[EvidenceOut]
     stats: StatsOut
     took_ms: int
+    # 两级检索的过程量：长文档先按章节粗筛，这两个数字说明"这次只看了多少块"
+    corpus_chunks: int = Field(default=0, description="全篇块数")
+    candidate_chunks: int = Field(default=0, description="章节粗筛后的候选块数；0 表示未启用粗筛")
     mode: str = Field(description="answer=走了大模型；retrieve=只返回召回证据")
     # 这篇是扫描件：引文是从 OCR 文本里摘的，个别字符可能与纸面不同，
     # 界面上必须说清楚 —— 否则用户会以为论文原文就长这样

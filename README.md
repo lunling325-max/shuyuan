@@ -287,7 +287,7 @@ E-038 之后界面是十二个视图（新增「跨文献对比」）。
 | [`docs/DEFENSE.md`](docs/DEFENSE.md) | **答辩问答准备**：十二个会被问到的问题，每题给一句话答案 + 追问准备 + 数字出处，另附三个"不要答"的坑 |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | **五分钟验收清单**：点哪里 → 该看到什么 → 看不到意味着什么（给评审或临时接手的人） |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑、回滚标签与对策） |
-| [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：时间轴、逐段口播、翻车预案；录屏成品 `build/shuyuan-demo.mp4`（6 分 26 秒） |
+| [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：13 段时间轴、逐段口播、后期做法与两个必须记住的约束。成片 `build/溯源科研助手-演示视频-省赛.mp4`（7 分 43 秒，1920×1080，不进仓库） |
 | [`docs/print.css`](docs/print.css) | 技术文档打印样式，配 pandoc 导出 PDF（文件头有完整命令） |
 
 ## 配置

@@ -328,11 +328,39 @@ def _plausible_heading(tail: str) -> bool:
     return letters >= 4 and letters / max(len(re.sub(r"\s", "", tail)), 1) >= 0.45
 
 
+def _reject_heading_text(text: str) -> bool:
+    """四类"看着像标题、其实是别的东西"的硬特征。
+
+    在 541 页教材上量过：406 个章节名里 5 个是假的，其中 4 个以 `0 ` 开头 ——
+    显示公式常以「0 …」起头（`0 z < 0 1 z ≥0 rect[z] =`），正好命中
+    「编号 + 空白 + 任意内容」那条判据。另外三类同样只靠硬特征排除，
+    不去猜语义，免得把真标题一起误伤：
+
+    | 假标题 | 判据 |
+    |---|---|
+    | `0 z < 0 1 z ≥0 rect[z] =` | 章节号是 0；或含 `= < > ≤ ≥ ^ _` |
+    | `0 that controls the overall height…(Interactive figure)` | 含交互图说明 |
+    | `1. This allows us to calculate the parameters ϕ[h1]…` | 编号 + 句子，词数超过 12 |
+
+    真标题不会同时踩中这几条：编号从 1 起、不含数学符号、不超过十余词。
+    """
+    t = text.strip()
+    if re.match(r"^0(?:\.|\s)", t):
+        return True
+    if "Interactive figure" in t:
+        return True
+    if re.search(r"[=<>≤≥^_]", t):
+        return True
+    if re.match(r"^\d+\.\s+[A-Z][a-z]+", t) and len(t.split()) > 12:
+        return True
+    return False
+
+
 def _heading(para: Para, body_size: float) -> tuple[int, str] | None:
     """判断是否标题，返回 (层级, 标题文本)。"""
     text = para.text.strip()
     n_tok = len(split_tokens(text))
-    if n_tok == 0 or n_tok > 25:
+    if n_tok == 0 or n_tok > 25 or _reject_heading_text(text):
         return None
 
     # 图表里的字比正文小得多，而"编号 + 空格 + 内容"那条判据不看字号，

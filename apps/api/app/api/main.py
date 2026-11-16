@@ -523,9 +523,12 @@ def ask(paper_id: str, req: QARequest) -> AnswerOut:
     t0 = time.perf_counter()
 
     queries = expand_query(req.question) if req.expand else [req.question]
+    trace: dict = {}
     hits = retrieve(
-        req.question, retriever=paper.bm25, k=req.k, expand=req.expand, queries=queries
+        req.question, retriever=paper.bm25, k=req.k, expand=req.expand,
+        queries=queries, trace=trace,
     )
+    candidate_chunks = trace.get("candidates", 0) if trace.get("narrowed") else 0
 
     if req.mode == "retrieve" or not hits:
         return AnswerOut(
@@ -534,6 +537,8 @@ def ask(paper_id: str, req: QARequest) -> AnswerOut:
             evidence=_evidence_out(hits),
             stats=StatsOut(),
             took_ms=int((time.perf_counter() - t0) * 1000),
+            corpus_chunks=trace.get("corpus", 0),
+            candidate_chunks=candidate_chunks,
             mode="retrieve",
             scanned=paper.scanned,
         )
@@ -566,6 +571,8 @@ def ask(paper_id: str, req: QARequest) -> AnswerOut:
         evidence=_evidence_out(answer.evidence),
         stats=StatsOut(**stats),
         took_ms=int((time.perf_counter() - t0) * 1000),
+        corpus_chunks=trace.get("corpus", 0),
+        candidate_chunks=candidate_chunks,
         mode="answer",
         scanned=paper.scanned,
     )

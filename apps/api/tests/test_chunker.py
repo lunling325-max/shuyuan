@@ -363,3 +363,30 @@ def test_ocr_line_height_alone_never_makes_a_heading(tmp_path):
     )
     chunks = chunk_pdf(str(pdf), ocr=hook)
     assert [c.section for c in chunks] == ["References"], [c.section for c in chunks]
+
+
+def test_false_headings_from_equations_and_captions_are_rejected(tmp_path):
+    """四类"像标题其实是别的东西"的段落必须被拒。
+
+    541 页教材实测：406 个章节名里 5 个是假的，其中 4 个以 `0 ` 开头 ——
+    显示公式常以「0 …」起头，正好命中「编号 + 空白 + 内容」那条判据。
+    这些假标题会直接进入阅读器的目录树，所以按硬特征排除，不猜语义。
+    """
+    pdf, hook = _ocr_pdf(
+        tmp_path,
+        [
+            ("Introduction", 16.0),
+            ("1.1 Supervised learning", 14.0),
+            ("0 z < 0 1 z >=0 rect[z] =", 14.0),                    # 公式碎片
+            ("0 that controls the overall height is added. (Interactive figure)", 14.0),
+            ("1. This allows us to calculate the parameters and then apply the inverse", 14.0),
+            ("body text follows here to keep the page non-empty", 10.0),
+        ],
+    )
+    chunks = chunk_pdf(str(pdf), ocr=hook)
+    sections = list(dict.fromkeys(c.section for c in chunks))
+    assert not any(s.startswith("0 ") for s in sections), sections
+    assert not any("Interactive figure" in s for s in sections), sections
+    assert not any(s.startswith("1. This allows") for s in sections), sections
+    # 真标题不能被误伤（块记录的是最深一级标题，所以这里是包含判断）
+    assert any("Introduction" in s for s in sections), sections

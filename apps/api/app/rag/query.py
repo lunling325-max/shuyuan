@@ -61,6 +61,26 @@ def expand_query(question: str, *, llm_call=None) -> list[str]:
     return with_offline(question, queries)
 
 
+# 低于这个块数不做两级检索：25 块的论文上，粗筛省的是毫秒，赔的是召回
+MIN_CHUNKS_FOR_SECTIONS = 150
+
+
+def _section_index(retriever):
+    """取（或懒建）该检索器的章节索引；小文档返回 None，表示"不适用"。"""
+    cached = getattr(retriever, "_section_index_cache", None)
+    if cached is not None:
+        return cached if cached is not False else None
+    chunks = getattr(retriever, "chunks", None) or []
+    if len(chunks) < MIN_CHUNKS_FOR_SECTIONS:
+        retriever._section_index_cache = False
+        return None
+    from app.retrieval.sections import build
+
+    index = build(chunks)
+    retriever._section_index_cache = index
+    return index
+
+
 def retrieve(
     question: str,
     *,
@@ -70,6 +90,7 @@ def retrieve(
     llm_call=None,
     expand: bool = True,
     queries: list[str] | None = None,
+    trace: dict | None = None,
 ) -> list[Hit]:
     """多路召回 + RRF。词法通道与向量通道并行，各查每一条检索式。
 
@@ -81,6 +102,31 @@ def retrieve(
     """
     if queries is None:
         queries = expand_query(question, llm_call=llm_call) if expand else [question]
+
+    # 两级检索：大文档先在章节层粗筛，再只在候选章节内做块级检索。
+    # 只在纯词法通道上做 —— 向量通道没有"章节"这个概念，混进来只会让两条路不一致。
+    # 粗筛结果不够 k 条时**整条退回全局检索**：宁可多花时间，也不能让召回缩水。
+    if trace is not None:
+        trace.update({"narrowed": False, "candidates": 0, "corpus": 0})
+    if retriever is not None and dense is None:
+        sections = _section_index(retriever)
+        if sections is not None:
+            corpus = len(retriever.chunks)
+            candidates = sections.candidates(queries)
+            if candidates:
+                narrowed: list[list[Hit]] = []
+                for q in queries:
+                    hits = retriever.search(q, k=k, restrict=candidates)
+                    if hits:
+                        narrowed.append(hits)
+                fused_narrow = reciprocal_rank_fusion(narrowed, limit=k) if narrowed else []
+                if len(fused_narrow) >= k:
+                    # 只有真的用了粗筛才记——退回去用全局时，别让界面说"粗筛过"
+                    if trace is not None:
+                        trace.update({"narrowed": True, "candidates": len(candidates),
+                                      "corpus": corpus})
+                    return fused_narrow
+
     searchers = [s for s in (retriever, dense) if s is not None]
     rankings: list[list[Hit]] = []
     for q in queries:
