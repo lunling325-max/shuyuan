@@ -52,6 +52,9 @@ from app.api.schemas import (
     CopilotOutlineRequest,
     CopilotPointOut,
     CopilotReferenceOut,
+    TopoEdgeOut,
+    TopoNodeOut,
+    TopologyOut,
     CopilotSectionOut,
     DiffChangeOut,
     DiffSummaryItem,
@@ -632,6 +635,28 @@ def copilot_outline(req: CopilotOutlineRequest) -> CopilotOutlineOut:
             for e in result.references
         ],
         degraded=result.degraded,
+    )
+
+
+@app.post("/api/copilot/topology", response_model=TopologyOut)
+def copilot_topology(req: CopilotOutlineRequest) -> TopologyOut:
+    """从 idea 生成架构拓扑图脚本（DOT / Mermaid / TikZ）。
+
+    模型只出结构，脚本由 `app.analysis.topology` 渲染 —— 让模型直接写 DOT/TikZ，
+    语法看着像却编译不过，评审拿到一份跑不起来的脚本比没有更糟。
+    """
+    from app.analysis import topology as topo_mod
+
+    topo = topo_mod.build(req.idea)
+    return TopologyOut(
+        idea=req.idea,
+        title=topo.title,
+        nodes=[TopoNodeOut(id=n.id, label=n.label, kind=n.kind) for n in topo.nodes],
+        edges=[TopoEdgeOut(src=e.src, dst=e.dst, label=e.label) for e in topo.edges],
+        dot=topo_mod.to_dot(topo) if topo.nodes else "",
+        mermaid=topo_mod.to_mermaid_flow(topo) if topo.nodes else "",
+        tikz=topo_mod.to_tikz(topo) if topo.nodes else "",
+        degraded=topo.degraded,
     )
 
 

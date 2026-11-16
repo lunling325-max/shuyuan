@@ -1219,10 +1219,16 @@ svg{width:100%;height:auto;display:block}
       </div>
       <div style="display:flex;gap:var(--sp-2);align-items:center;margin-bottom:18px">
         <button class="btn primary" id="cp-run">生成框架</button>
+        <button class="btn" id="cp-topo">生成架构图脚本</button>
         <span class="sub" id="cp-state" role="status" aria-live="polite" style="margin:0"></span>
       </div>
       <div id="cp-out">
         <p class="note" style="margin:0">输入研究构想后点击「生成框架」。各要点后的编号可点击跳转至原文。</p>
+      </div>
+      <div id="cp-topo-out" hidden style="margin-top:18px">
+        <h2 style="font-size:var(--fs-md);margin:0 0 var(--sp-2)">架构拓扑图脚本</h2>
+        <p class="sub" id="cp-topo-note" style="margin:0 0 var(--sp-2)"></p>
+        <div id="cp-topo-list" style="display:flex;gap:var(--sp-2);flex-wrap:wrap"></div>
       </div>
     </div>
 
@@ -5751,6 +5757,54 @@ svg{width:100%;height:auto;display:block}
   $('ag-plan')?.addEventListener('click', () => runAgent('plan'));
   $('ag-run')?.addEventListener('click', () => runAgent('run'));
   $('ag-task')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runAgent('run'); });
+
+  // 架构拓扑图：模型只出结构，脚本由后端渲染 —— 模型写 DOT/TikZ 会产出编译不过的东西
+  $('cp-topo')?.addEventListener('click', async () => {
+    const idea = ($('cp-idea')?.value || '').trim();
+    if (!idea) { $('cp-state').textContent = '先写一句研究构想'; return; }
+    const btn = $('cp-topo');
+    btn.disabled = true;
+    $('cp-state').textContent = '正在生成架构图…';
+    try {
+      const data = await api('/copilot/topology', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idea }),
+      });
+      renderTopology(data);
+    } catch (err) {
+      $('cp-state').textContent = `生成失败：${err.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  /** 画出节点与边，并给三种脚本各一个下载按钮。 */
+  function renderTopology(data) {
+    const box = $('cp-topo-out');
+    const list = $('cp-topo-list');
+    box.hidden = false;
+    if (data.degraded || !(data.nodes || []).length) {
+      $('cp-topo-note').textContent = '大模型暂不可用，未能生成结构。';
+      list.replaceChildren();
+      $('cp-state').textContent = '';
+      return;
+    }
+    const name = (data.title || 'architecture').slice(0, 24);
+    $('cp-topo-note').textContent =
+      `${data.title} · ${data.nodes.length} 个节点 / ${data.edges.length} 条边；`
+      + '脚本由结构渲染，不依赖模型写代码。';
+    list.replaceChildren(
+      ...([['Graphviz (.dot)', 'dot', data.dot, `${name}.dot`],
+          ['Mermaid (.mmd)', 'mmd', data.mermaid, `${name}.mmd`],
+          ['TikZ (.tex)', 'tex', data.tikz, `${name}.tex`]])
+        .filter(([, , text]) => text)
+        .map(([label, , text, filename]) => el('button', {
+          class: 'btn',
+          on: { click: () => download(filename, text) },
+        }, label)));
+    $('cp-state').textContent = '架构图脚本已生成';
+  }
 
   $('cp-run')?.addEventListener('click', runCopilot);
   $('cp-idea')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runCopilot(); });

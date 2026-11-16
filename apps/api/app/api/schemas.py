@@ -242,6 +242,31 @@ class CopilotOutlineOut(BaseModel):
     degraded: bool = Field(description="True=大模型不可用，outline 为空但 references 仍是真实文献")
 
 
+class TopoNodeOut(BaseModel):
+    id: str
+    label: str
+    kind: str = "module"
+
+
+class TopoEdgeOut(BaseModel):
+    src: str
+    dst: str
+    label: str = ""
+
+
+class TopologyOut(BaseModel):
+    """架构拓扑图：结构 + 三份可直接粘贴的脚本（DOT / Mermaid / TikZ）。"""
+
+    idea: str
+    title: str = ""
+    nodes: list[TopoNodeOut] = []
+    edges: list[TopoEdgeOut] = []
+    dot: str = ""
+    mermaid: str = ""
+    tikz: str = ""
+    degraded: bool = False
+
+
 class ReferenceOut(BaseModel):
     """一条参考文献。`parsed=False` 的条目照样返回 —— 解析不出来是常态，
     藏起来反而让人以为这篇论文没有参考文献，前端需要显示"这条没解析出标题"。"""
