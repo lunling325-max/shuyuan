@@ -142,11 +142,33 @@ _get = get_paper
 # ------------------------------------------------------------------ 路由
 
 
+def _rss_mb() -> float:
+    """本进程常驻内存（MB）。
+
+    读 `/proc/self/status` 而不是引 psutil：容器里就是 Linux，一个文件读完，
+    不必为一个数字给镜像加依赖。非 Linux 平台返回 0 —— 这个数字是给人看的，
+    拿不到时宁可空着，也不要编一个。
+    """
+    try:
+        with open("/proc/self/status", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024, 1)
+    except OSError:
+        pass
+    return 0.0
+
+
 @app.get("/api/health")
 def health() -> dict:
+    papers = registry.all()
     return {
         "ok": True,
-        "papers": len(registry.all()),
+        "papers": len(papers),
+        # 规模与内存：长文档用例（541 页）要看的"工程鲁棒性"，给的是可核对的数字
+        "pages": sum(p.pages for p in papers),
+        "chunks": sum(len(p.chunks) for p in papers),
+        "memory_mb": _rss_mb(),
         "llm_configured": bool(os.environ.get("DEEPSEEK_API_KEY")),
     }
 

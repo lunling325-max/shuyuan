@@ -1776,8 +1776,12 @@ svg{width:100%;height:auto;display:block}
     });
 
     const pages = state.papers.reduce((s, p) => s + p.pages, 0);
+    const chunks = state.papers.reduce((s, p) => s + (p.chunks || 0), 0);
+    // 内存与块数来自 /api/health（后端读 /proc 得到）；取不到就不写，不编数字
+    const mem = state.health && state.health.memory_mb
+      ? ` · 进程 ${Math.round(state.health.memory_mb)} MB` : '';
     $('lib-summary').textContent = state.papers.length
-      ? `${state.papers.length} 篇文献 · 共 ${pages} 页 · 索引已在内存中`
+      ? `${state.papers.length} 篇文献 · 共 ${pages} 页 · ${chunks} 块索引常驻${mem}`
       : '文献库为空 —— 上传一篇 PDF 即可开始';
     empty.hidden = state.papers.length > 0;
 
@@ -2212,8 +2216,18 @@ svg{width:100%;height:auto;display:block}
     ask();
   }
 
+  /** 取一次 /api/health 里的规模与内存（失败就静默，摘要里不写这半句）。 */
+  async function refreshHealth() {
+    try {
+      state.health = await api('/health');
+    } catch {
+      state.health = null;
+    }
+  }
+
   async function loadPapers() {
     try {
+      await refreshHealth();
       state.papers = await api('/papers');
       renderLibrary();
       showNote('');
