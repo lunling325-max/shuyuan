@@ -113,6 +113,21 @@ for i in $(seq 1 60); do
     HOST="${SERVER#*@}"
     printf '\n打开 http://%s:%s/\n' "$HOST" "$PORT"
     printf '接口文档 http://%s:%s/docs\n' "$HOST" "$PORT"
+
+    # 健康检查只看"服务活着"，不看"赛题要的素材在不在"。
+    # E-063 的教训：服务健康、本地四项齐全，线上却连 541 页教材都没有。
+    say "覆盖核查：赛题 3.1 / 3.2 的四份素材"
+    if python3 "$ROOT/scripts/check_testcases.py" --server "http://$HOST:$PORT" 2>/dev/null         || python "$ROOT/scripts/check_testcases.py" --server "http://$HOST:$PORT"; then
+      printf '
+素材齐全，可以按赛题逐项验收。
+'
+    else
+      printf '
+[1;33m部署成功，但测试用例素材不全 —— 评审按赛题点开会对不上。[0m
+'
+      printf '补法：./scripts/seed_demo.py <目录> --server http://%s:%s
+' "$HOST" "$PORT"
+    fi
     # 只有还缺密钥时才提示；已经配好的机器重跑脚本不该再催一遍
     if ! printf '%s' "$body" | grep -q '"llm_configured": *true'; then
       printf '\n还差一步：在服务器上填密钥\n  ssh %s "nano %s/.env"   # 填 DEEPSEEK_API_KEY\n  ssh %s "cd %s && docker compose up -d --force-recreate api"\n' \
