@@ -102,6 +102,13 @@ COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --chown=appuser:appuser apps/api/app ./apps/api/app
 COPY --chown=appuser:appuser apps/web ./apps/web
 
+# 公式识别模型：构建期从国内镜像拉，逐个核对官方哈希（校验不过就让构建失败）。
+# 为什么不进构建上下文：128 MB 的二进制不该走 git，也不该每次构建都上传一遍。
+# 为什么必须校验：镜像内容无法验签，唯一能确认"这份就是官方那份"的办法是比哈希。
+COPY --chown=appuser:appuser scripts/fetch_formula_model.py ./fetch_formula_model.py
+RUN python ./fetch_formula_model.py /app/models/mfr && chown -R appuser:appuser /app/models
+ENV FORMULA_OCR_DIR=/app/models/mfr
+
 RUN mkdir -p /app/data/papers && chown -R appuser:appuser /app/data
 
 # 以 apps/api 为工作目录，`uvicorn app.api.main:app` 才能导入 app 包；

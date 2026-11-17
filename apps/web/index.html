@@ -445,6 +445,11 @@ mark{
 /* "本次检索到的原文块"每一行：节名会折行，分数必须留在同一行右侧，
    不然分数会被挤到下一行开头，看起来像另一条的编号 */
 /* 摘要条：默认两行，点「展开」看全文 —— 长摘要不该把正文挤下去 */
+/* 公式的 LaTeX 行：等宽小字，识别出来后再换成可复制的代码块 */
+.latexrow{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;margin-top:6px}
+.latexrow code.latex{flex:1;min-width:0;font-size:var(--fs-xs);line-height:1.5;
+  word-break:break-all;background:var(--bg-2);padding:4px 6px;border-radius:4px}
+
 .abstract{display:flex;gap:8px;align-items:baseline;margin:6px 0 0;
   font-size:var(--fs-sm);color:var(--ink-2);line-height:1.6}
 .abstract .lbl{flex:none;color:var(--ink-3)}
@@ -3070,7 +3075,35 @@ svg{width:100%;height:auto;display:block}
           },
         },
       }),
-      el('code', { class: 'vtext' }, f.text));
+      el('code', { class: 'vtext' }, f.text),
+      latexRow(f));
+  }
+
+  /** 公式的 LaTeX：模型按需识别（单条约一秒），结果落盘缓存。
+      没装模型时这里只出现一句说明，不留一个点了没反应的按钮。 */
+  function latexRow(f) {
+    const box = el('div', { class: 'latexrow' });
+    const btn = el('button', { class: 'btn', type: 'button',
+      on: {
+        click: async () => {
+          btn.disabled = true;
+          btn.textContent = '识别中…';
+          try {
+            const data = await api(`/papers/${state.paper.id}/formulas/${f.index}/latex`,
+              { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            box.replaceChildren(
+              el('code', { class: 'latex' }, data.latex),
+              el('button', { class: 'btn', type: 'button',
+                on: { click: () => { navigator.clipboard?.writeText(data.latex);
+                  showNote('LaTeX 已复制'); } } }, '复制'));
+          } catch (err) {
+            box.replaceChildren(el('p', { class: 'note', style: 'margin:0' },
+              err.message || '识别失败'));
+          }
+        },
+      } }, '识别 LaTeX');
+    box.append(btn);
+    return box;
   }
 
   /** 正文 → 参考文献。找不到就明说，不要静默什么都不发生。 */
