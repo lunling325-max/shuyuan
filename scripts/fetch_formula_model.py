@@ -57,7 +57,12 @@ def main(out_dir: str) -> int:
             data = path.read_bytes()
         else:
             print(f"  下载 {name} …", flush=True)
-            with urllib.request.urlopen(BASE + name, timeout=900) as r:
+            # 必须带 User-Agent：镜像站的 CDN 会拒绝 urllib 默认的 "Python-urllib/3.x"（返回 403）
+            req = urllib.request.Request(
+                BASE + name,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; research-agent/1.0)"},
+            )
+            with urllib.request.urlopen(req, timeout=900) as r:
                 data = r.read()
             path.write_bytes(data)
         got = _sha256(data) if algo == "sha256" else _git_sha1(data)

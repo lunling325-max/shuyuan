@@ -39,5 +39,7 @@ tmp
 docs
 prototype
 scripts
+# 只放行构建期下载模型的那一个脚本，其余脚本仍不进镜像
+!scripts/fetch_formula_model.py
 *.md
 !README.md
