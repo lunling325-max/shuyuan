@@ -384,13 +384,15 @@ def test_multi_word_query_is_sent_as_a_phrase(monkeypatch):
     arxiv.search_arxiv("attention is all you need", limit=5)
 
     assert len(calls) == 1, "整句命中了就不用再按词搜"
-    assert "search_query=all%3A%22attention%20is%20all%20you%20need%22" in calls[0]
+    # 第一次必须用标题字段：只按 all: 搜时，标题里凑巧含这些词的新论文会排在目标论文前面
+    assert "search_query=ti%3A%22attention%20is%20all%20you%20need%22" in calls[0]
 
 
 def test_phrase_miss_falls_back_to_loose_words(monkeypatch):
     """"我只有一个主题、没有标题"时，整句搜不到要退回去按词搜。"""
     calls: list[str] = []
-    feeds = [EMPTY_FEED, ATOM_FEED]
+    # 三次候选：ti:整句、all:整句 都空，第三次按词搜才有结果
+    feeds = [EMPTY_FEED, EMPTY_FEED, ATOM_FEED]
 
     def fetch(url: str) -> bytes:
         calls.append(url)
@@ -400,8 +402,9 @@ def test_phrase_miss_falls_back_to_loose_words(monkeypatch):
 
     result = arxiv.search_arxiv("sparse attention long document retrieval")
 
-    assert len(calls) == 2
-    assert "%22" in calls[0] and "%22" not in calls[1], "第一次整句带引号，第二次按词搜"
+    # 候选顺序：ti:"整句" → all:"整句" → all:按词。前两次都带引号，最后一次按词搜。
+    assert len(calls) == 3
+    assert "%22" in calls[0] and "%22" in calls[1] and "%22" not in calls[2]
     assert result.results, "退回去的那次有结果就要用"
     assert "精确匹配" in result.note, "要说清这批不是精确匹配"
 
@@ -430,4 +433,4 @@ def test_search_reaches_the_degraded_path_when_the_fetch_keeps_failing(monkeypat
 
 def test_quotes_in_user_query_do_not_break_the_syntax():
     candidates = arxiv._search_candidates('a "quoted" (weird) query')
-    assert candidates[0] == 'all:"a quoted (weird) query"'
+    assert candidates[0] == 'ti:"a quoted (weird) query"'

@@ -238,7 +238,9 @@ def _search_candidates(normalized_query: str) -> list[str]:
     否则一个多余的 `"` 会把整个检索式变成语法错误。
     """
     cleaned = " ".join(normalized_query.replace('"', " ").replace("\\", " ").split())
-    candidates = [f'all:"{cleaned}"']
+    # 标题精确匹配优先：只按 all:"..." 搜时，标题里凑巧含这些词的新论文会排前面，
+    # 真正的目标论文反而沉下去（实测搜 "attention is all you need" 第一条是别的）。
+    candidates = [f'ti:"{cleaned}"', f'all:"{cleaned}"']
     if " " in cleaned:
         candidates.append(f"all:{cleaned}")
     return candidates
