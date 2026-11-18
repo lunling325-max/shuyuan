@@ -1,14 +1,14 @@
 # 科研助手 Agent
 
-> 每句话都能点回原文精确位置的版本感知科研 Agent
+> 每条结论均可定位回原文精确位置的版本感知科研 Agent
 
 一句话 → 检索 → 生成 → **逐条核对回原文**：核对得上的结论带页码与坐标框返回，
-核对不上的直接拦下并说明原因。不是"让模型答得好"，而是**让模型没法乱答**。
+核对不上的直接拦下并说明原因。
 
 ## 快速开始
 
 前置只有一个：[uv](https://docs.astral.sh/uv/)（一个可执行文件，管 Python 依赖与版本）。
-机器上没装 Python 也行，uv 会自己挑一个。
+机器上未安装 Python 亦可，uv 会自动选择一个可用的 Python 版本。
 
 ```bash
 git clone <本仓库> && cd <仓库目录>
@@ -16,11 +16,11 @@ git clone <本仓库> && cd <仓库目录>
 .\scripts\dev.ps1         # Windows PowerShell
 ```
 
-脚本只做四件事：确认 uv 装了 → 没有 `.env` 就从 `.env.example` 造一份 →
-`uv sync` 装依赖（走清华镜像）→ 起服务。打开 <http://127.0.0.1:8017/>，
+脚本依次执行四步：检查 uv 是否安装 → 若缺少 `.env` 则由 `.env.example` 生成一份 →
+`uv sync` 安装依赖（走清华镜像）→ 启动服务。打开 <http://127.0.0.1:8017/>，
 前端由同一个进程托管，不用另起。
 
-不想用脚本，就三条命令：
+不通过脚本启动时，使用以下三条命令：
 
 ```bash
 cd apps/api && uv sync
@@ -28,12 +28,12 @@ cp ../../.env.example ../../.env           # 里面填 DEEPSEEK_API_KEY
 uv run uvicorn app.api.main:app --reload --port 8017
 ```
 
-**不填 key 也能跑。** 没有 `DEEPSEEK_API_KEY` 时服务照常启动：检索（`mode=retrieve`）、
+**未配置 key 亦可运行。** 缺少 `DEEPSEEK_API_KEY` 时服务照常启动：检索（`mode=retrieve`）、
 综述框架、图表、中译英、Agent 规划这些接口返回 200 + `degraded`，扫描件 OCR、
-表格与插图解析照常工作。问答的 `answer` 模式返回 503，界面当场写明
+表格与插图解析照常工作。问答的 `answer` 模式返回 503，界面显示
 「生成中断（llm）：大模型未配置（缺少 DEEPSEEK_API_KEY），以上为仅检索结果」，
-并把这次召回的原文块就地列在下面（每一条点得进阅读器对应段落）。这是有意设计——
-演示现场断网不该白屏。
+本次召回的原文块随即列在下方（每一条均可跳转至阅读器对应段落）。这是有意设计——
+演示现场断网不应白屏。
 
 **中文提问也不依赖模型。** 内置一张"中文术语 → 英文检索词"的表（`app/rag/glossary.py`），
 不联网、不调模型，18 题开发集 Hit@1 88.9% / Hit@3 94.4%，13 题留出集 92.3%；
@@ -52,11 +52,11 @@ uv run uvicorn app.api.main:app --reload --port 8017
 
 - `/docs`　自动生成的 OpenAPI 文档
 - 演示深链：`/?paper=<文献 id>&ask=<问题>` 直接打开某篇并提问
-- 想跑 Docker：见下方「部署与运行（Docker）」，一条 `docker compose up --build -d`
+- Docker 部署：见下方「部署与运行（Docker）」，一条 `docker compose up --build -d`
 
 ## 技术架构
 
-一句话：**单进程、磁盘即数据库**。浏览器只跟一个 FastAPI 进程打交道，它同时托管前端静态文件；
+一句话：**单进程、磁盘即数据库**。浏览器只与一个 FastAPI 进程通信，前端静态文件由该进程一并托管；
 没有数据库、没有消息队列、没有前端构建步骤。
 
 | 层 | 位置 | 职责 |
@@ -74,7 +74,7 @@ uv run uvicorn app.api.main:app --reload --port 8017
 
 ## 界面
 
-全部截图由 CDP 驱动真实浏览器拍下（`scripts/shoot.py`），不是设计稿。
+全部截图由 CDP 驱动真实浏览器拍下（`scripts/shoot.py`）。
 
 | 问答：每条结论都带页码与原文 | 流式：草稿区明写"尚未校验" |
 |---|---|
@@ -126,7 +126,7 @@ apps/api/app/
                chart.py        纯手写 SVG：柱状/折线/散点/雷达，配色烘焙进属性
                export.py       TikZ / Mermaid / Matplotlib 源码导出
   versioning.py               版本谱系：关系判定 + 句级对齐 + 噪声过滤
-  versioning_summary.py       把差异翻成中文（模型挂了就如实降级）
+  versioning_summary.py       把差异翻成中文（模型不可用时执行降级）
   references.py               参考文献解析：数字标记 / 字母标记 / ACL 无标记三种版面
   citegraph.py                引用图谱：版本聚类 → 标题匹配 → 手写 PageRank → 确定性布局
   api/         main.py         上传 / 列表 / 删除 / 单篇读取等核心路由
@@ -153,7 +153,7 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 | GET | `/api/papers/{id}/scan` | 扫描件判定与 OCR 状态 |
 | GET | `/api/papers/{id}/tables` | 表格结构化：行×列单元格、标题、Markdown；首次解析逐页找网格线（约 0.29 秒/页，前 40 页），之后走磁盘缓存 |
 | GET | `/api/papers/{id}/figures` | 插图清单：页码、坐标框、图注、原始像素尺寸，`thumb` 指向缩略图 |
-| GET | `/api/papers/{id}/figures/{i}.png` | 按版面重渲染的缩略图（不是原图：原图可能是 CMYK 或 4000px 宽） |
+| GET | `/api/papers/{id}/figures/{i}.png` | 按版面重渲染的缩略图（原图可能是 CMYK 或 4000px 宽，故重新渲染） |
 | GET | `/api/papers/{id}/formulas` | 带编号的公式：页码、编号、包围盒、`note`（0 个时说清为什么）、一段明说有损的文本层 |
 | GET | `/api/papers/{id}/formulas/{i}.png` | 按包围盒裁的公式图（200 dpi，公式字号只有正文一半，110 dpi 会糊） |
 | POST | `/api/papers/{id}/qa` | 问答，返回结论 + 锚点 + 守卫统计 |
@@ -166,8 +166,8 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 | GET | `/api/recommend` | arXiv 最新提交 × 本地库相关性 × 开源代码的推荐，带逐条推荐理由；`?fresh=true` 绕过 15 分钟缓存 |
 | POST | `/api/recommend/vote` | 点赞/踩（再投同一票=取消），按用户分开落盘 |
 | GET | `/api/papers/{id}/bibtex` | 该篇参考文献导出 BibTeX；`/api/bibtex` 导整个库（1257 条实测 307 KB） |
-| GET / POST | `/api/tracking` | arXiv 订阅：列表 / 新建（关键词 + 分类 + 间隔）；`/{id}/run` 立即抓取、`/run` 跑到期的、`/ack` 标记已读 |
-| GET | `/api/tools/search` | 多来源检索：arXiv / OpenAlex / Crossref / Semantic Scholar / Zenodo 并发查、跨站去重，每站各自 `degraded`，`?sources=` 选站；每条带 `citations` 与 `citations_source`（0 = 这个站没给数，不是没人引） |
+| GET / POST | `/api/tracking` | arXiv 订阅：列表 / 新建（关键词 + 分类 + 间隔）；`/{id}/run` 立即抓取、`/run` 处理已到期的、`/ack` 标记已读 |
+| GET | `/api/tools/search` | 多来源检索：arXiv / OpenAlex / Crossref / Semantic Scholar / Zenodo 并发查、跨站去重，每站各自 `degraded`，`?sources=` 选站；每条带 `citations` 与 `citations_source`（0 = 这个站未给计数） |
 | GET | `/api/tools/arxiv/search` | 只查 arXiv（断网时 `degraded=true`，不报 500） |
 | POST | `/api/tools/arxiv/ingest` | 检索结果直接入库：下载 → 解析 → 去重 |
 | GET | `/api/agent/tools` | 10 个工具的名称、参数与返回契约 |
@@ -187,19 +187,19 @@ prototype/     mockup.html    设计稿（对照用，不接数据）
 
 流式接口有一个必须说清的前提：`token` 发出去的是**未经校验**的模型原文
 （这条链路答案是 JSON，所以屏幕上先滚出来的是半截 JSON）。抗幻觉校验在流结束后
-才跑，结果通过 `claims` 覆盖展示，被拦下的条目带 `status=unsupported` 与原因。
+才执行，结果通过 `claims` 覆盖展示，被拦下的条目带 `status=unsupported` 与原因。
 "流式渲染"不等于"流式也经过校验"。
 
 ## 测试
 
 ```bash
-cd apps/api && uv run pytest -q     # 572 项
+cd apps/api && uv run pytest -q     # 594 项
 ```
 
 其中一部分用例要读真实的演示论文（`pdf/` 不进仓库，见 `.gitignore`，7 份约 43 MB；
 用例按文件名找，需要哪几个写在各测试模块顶部的路径常量里）。
-没有这些文件时它们会 **skip 并写明缺哪个文件**，不会整片变红：从零 clone 下来实测
-`241 passed, 330 skipped`；把 PDF 放进仓库根的 `pdf/` 之后是 `572 passed`。
+缺少这些文件时，相应用例自动 skip 并写明缺少的文件，不会整体失败；
+把 PDF 放进仓库根的 `pdf/` 之后是 **`594 passed`**（2026-11-17 实测）。
 
 覆盖：切块的边界条件、BM25 排序与单复数归并、RRF 去重、守卫的三级匹配、
 Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资料库恢复、
@@ -225,57 +225,32 @@ Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资
   （编造的替换成 `[未核实]`、大面积编造退回模板）、模型不可用返回 200 + `degraded`、
   导出源码与图共用同一份清洗后数据、错误码分级（400/413/422）。
 - **中译英**：公式/代码/`[n]` 丢了就整段退回原文、段数守恒、超长输入 413、空输入 400。
-- **扫描件 OCR**：扫描页判定与混合文档逐页标注、引擎缺失时如实报不可用而不是假装识别成功、
+- **扫描件 OCR**：扫描页判定与混合文档逐页标注、引擎缺失时返回不可用状态、
   损坏 PDF 退化成报告、竖排投稿戳不许混进正文、同行作者按 x 排、双栏整栏读完再读右栏、
   模型给的空格原样保留、识别结果落盘后重启仍可用、缓存文件损坏不影响解析、
   `References` 独立成块（否则整份文献 0 条引文）、编号与标题粘连仍能认出、
   墨迹高度不许冒充字号、OCR 块按行拆开以保住 `[n]` 标记。
-- **表格与插图**：数字必须留在自己那一格里（`24.6` 不许被拆成 `246` + `.`）、
+- **表格与插图**：数字必须留在原来的单元格内（`24.6` 不得被拆成 `246` + `.`）、
   词间空格与小数点碎片分得开、表题在上图题在下且只取标题不吃正文、
-  面积过小的是图标、整页大小的是扫描位图，两头都不要、
-  目录页被误认成 32×3 的表要挡掉、扫描件如实说"提不出来"而不是猜一张网格、
-  缓存坏了重新解析、缩略图必须是 PNG 字节而不是一段 200 的 JSON。
+  面积过小的是图标、整页大小的是扫描位图，两者均不计入、
+  目录页被误认成 32×3 的表要挡掉、扫描件标注为"提不出来"、
+  缓存损坏时重新解析、缩略图必须是 PNG 字节。
 - **引用跳转**：跳转落点必须是**含这句引文的那一块**（不能只按页码取同页第一块）、
   高亮要盖住整句（引文丢了 `=` 之类符号时按前缀对齐延长）、引用卡片上的节名与正文一致。
 - **口味排序（多用户）**：点赞满两篇才生效、口味最多抬高 15%、踩过的只压到 0 不压成负数、
   理由里写清"像哪几篇"、老格式 feedback.json 读得出来并自动升级。
 - **定期追踪**：首轮算基线不算新增、同一批再抓一次必须报 0、关键词"至少两个词"、
   抓取失败也要推进 `last_run_at`（否则每分钟重试）、同一时刻只许一个抓取、
-  订阅表读坏了另存 `.bad` 而不是静默清空、GET 不改状态（连读两次徽标不变）。
+  订阅表读坏了另存 `.bad`、GET 不改状态（连读两次徽标不变）。
 - **公式块**：只认右边缘那个 `(N)`（无编号的居中公式会把表格里的 `6.0 × 10−4` 认成公式）、
   两栏页面不许串栏、求和的上下限与分式的分子分母要接进框里、数学字体占比不许算出 1.15、
-  没有编号公式的论文说"没有找到"而不是"解析失败"、扫描件说"提不出"、
+  没有编号公式的论文说"没有找到"、扫描件说"提不出"、
   裁图必须是 PNG 字节、越界索引 404 且说清共有几个。
 
 ## 实验记录
 
 所有"哪个方案更好"的结论都带数字，写在 [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md)，
 包括**被数据推翻的假设**（检索式加权、密集检索融合）。没有数字的取舍不写进去。
-
-## 端到端评测
-
-```bash
-# 24 题人工标注：15 题库里该有答案，9 题论文里根本没有（必须拒答）
-uv run --directory apps/api python ../../scripts/eval_qa.py \
-    --base-url http://101.37.190.214:8017 --out build/eval-qa.md
-```
-
-判据不看接口自报的 `exact` 字段：把 PDF 下载下来自己重算 —— 引文字符流能否在
-所指页原样找到、bbox 能否盖住引文首尾字。每轮还会抽 6 条真引用故意改坏
-（框平移、引文续编），核验器必须把它们全部拦下，否则本轮的引用数字作废。
-
-| 指标 | 结果（2026-11-11 线上，2C4G） |
-|---|---|
-| 引用准确率（回 PDF 独立核验） | **52 / 52 = 100%** |
-| 拒答正确率（论文里没有就不许给结论） | **9 / 9 = 100%** |
-| 核验器反向对照 | **12 / 12** 条改坏的引用被拦下 |
-| 单题耗时 中位数 / 最长 | 1999 ms / 5597 ms |
-
-这组数字是 11-11 从一份干净的 clone 里跑出来的（E-036）；11-07 那次是 53 / 53、
-1851 / 5157 ms，差的一条引用来自库里多了一篇 GLU 论文改变了某题的召回块数。
-库从 7 篇灌到 13 篇（260 页 / 531 块）后也复测过：三项指标一条没掉，中位耗时
-1851 → 2005 ms；十一个视图全部可用，最慢的是综述 13.5 s（E-026）。
-E-038 之后界面是十二个视图（新增「跨文献对比」）。
 
 ## 文档索引
 
@@ -285,8 +260,8 @@ E-038 之后界面是十二个视图（新增「跨文献对比」）。
 | [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 60 篇实验记录（E-001–E-060），每条带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEFENSE.md`](docs/DEFENSE.md) | **答辩问答准备**：十二个会被问到的问题，每题给一句话答案 + 追问准备 + 数字出处，另附三个"不要答"的坑 |
-| [`docs/ACCEPTANCE-RUN-2026-11-16.md`](docs/ACCEPTANCE-RUN-2026-11-16.md) | **线上验收记录**：在真实部署上按清单跑一遍的原始证据（含复现命令与已知局限） |
-| [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | **五分钟验收清单**：点哪里 → 该看到什么 → 看不到意味着什么（给评审或临时接手的人） |
+| [`docs/ACCEPTANCE-RUN-2026-11-16.md`](docs/ACCEPTANCE-RUN-2026-11-16.md) | **线上验收记录**：在真实部署上按清单执行一遍的原始证据（含复现命令与已知局限） |
+| [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | **五分钟验收清单**：点击位置 → 预期结果 → 结果缺失时的含义（给评审或临时接手的人） |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署到云服务器的完整步骤（含已知坑、回滚标签与对策） |
 | [`docs/VIDEO.md`](docs/VIDEO.md) | 演示视频脚本：13 段时间轴、逐段口播、后期做法与两个必须记住的约束。成片 `build/溯源科研助手-演示视频-省赛.mp4`（7 分 43 秒，1920×1080，不进仓库） |
 | [`docs/print.css`](docs/print.css) | 技术文档打印样式，配 pandoc 导出 PDF（文件头有完整命令） |
@@ -298,12 +273,12 @@ E-038 之后界面是十二个视图（新增「跨文献对比」）。
 | `DEEPSEEK_API_KEY` | 必填，生成与检索词扩展 |
 | `DEEPSEEK_BASE_URL` | 可选，默认 `https://api.deepseek.com` |
 | `LLM_MODEL` | 可选，默认 `deepseek-chat` |
-| `PAPER_STORE_DIR` | 可选，PDF 落盘目录，默认 `data/papers`（OCR 缓存跟着放同级 `ocr_cache/`） |
-| `RAG_OCR` | 可选，设 `off` 关掉扫描件识别。关闭时扫描页不会被假装识别成功，接口如实报 `ocr_available=false`（见 `docs/EXPERIMENTS.md` E-018） |
-| `RESEARCH_PROXY` | 可选。默认**直连、不走系统代理**（这台机器的注册表代理会让每次请求多绕一跳，实测直连 1.7 秒、走代理 3 秒起）；填 `system` 用回系统代理，填 `http://host:port` 用指定代理（见 `docs/EXPERIMENTS.md` E-016） |
-| `ARXIV_TLS13` | 可选，设 `1` 就只用默认协议、不退回 TLS 1.2。不设时按主机自动选：连接建不起来就换另一种协议重发一次，哪种成功记住了（见 `docs/EXPERIMENTS.md` E-013、E-016） |
-| `PAPER_TRACKING_SCHEDULER` | 可选，设 `0` 关掉 arXiv 追踪的后台定时器（每 60 秒看一眼有没有到期的订阅）。单测里默认关着（见 `docs/EXPERIMENTS.md` E-042） |
-| `SEMANTIC_SCHOLAR_API_KEY` | 可选。不配时 Semantic Scholar 作为一个来源会被限流（429），界面如实标注「暂不可用」，其余来源不受影响 |
+| `PAPER_STORE_DIR` | 可选，PDF 落盘目录，默认 `data/papers`（OCR 缓存置于同级 `ocr_cache/`） |
+| `RAG_OCR` | 可选，设 `off` 关掉扫描件识别。关闭时扫描页不会被视为识别成功，接口返回 `ocr_available=false`（见 `docs/EXPERIMENTS.md` E-018） |
+| `RESEARCH_PROXY` | 可选。默认**直连、不走系统代理**（这台机器的注册表代理会让每次请求多绕一跳，实测直连 1.7 秒、走代理 3 秒起）；填 `system` 时使用系统代理，填 `http://host:port` 时使用指定代理（见 `docs/EXPERIMENTS.md` E-016） |
+| `ARXIV_TLS13` | 可选，设 `1` 就只用默认协议、不退回 TLS 1.2。不设时按主机自动选：连接建立失败时改用另一种协议重发一次，并记录成功的那一种（见 `docs/EXPERIMENTS.md` E-013、E-016） |
+| `PAPER_TRACKING_SCHEDULER` | 可选，设 `0` 关掉 arXiv 追踪的后台定时器（每 60 秒检查一次是否有到期的订阅）。单测里默认关着（见 `docs/EXPERIMENTS.md` E-042） |
+| `SEMANTIC_SCHOLAR_API_KEY` | 可选。不配时 Semantic Scholar 作为一个来源会被限流（429），界面标注为「暂不可用」，其余来源不受影响 |
 
 `.env` 已在 `.gitignore` 里，密钥不进仓库。
 
@@ -353,7 +328,7 @@ docker run --rm -p 8017:8017 \
 | `LLM_MODEL` | 否 | `deepseek-chat` | 模型名 |
 | `LLM_STREAM_TIMEOUT` | 否 | `60` | 流式响应两次 token 之间的最长等待（秒） |
 | `PAPER_STORE_DIR` | 否 | 本地 `<仓库根>/data/papers`；容器内 `/app/data/papers` | PDF 与 sidecar 落盘目录 |
-| `RESEARCH_PROXY` | 否 | 空（直连） | 默认绕开系统代理；填 `system` 用回系统代理，填 `http://host:port` 用指定代理 |
+| `RESEARCH_PROXY` | 否 | 空（直连） | 默认绕开系统代理；填 `system` 时使用系统代理，填 `http://host:port` 时使用指定代理 |
 | `ARXIV_TLS13` | 否 | 空（按主机自动在 1.3 / 1.2 之间试） | 设 `1` 只走默认协议，不再退回 TLS 1.2 |
 | `SEMANTIC_SCHOLAR_API_KEY` | 否 | 空 | 填了才走 Semantic Scholar；不填则这一路稳定 429，界面标为「暂不可用」 |
 | `PAPER_TRACKING_SCHEDULER` | 否 | 开（每 60 秒一跳） | 设 `0` 关掉 arXiv 追踪的后台定时器 |
@@ -368,7 +343,7 @@ docker run --rm -p 8017:8017 \
 - 镜像内声明了 `VOLUME ["/app/data"]`，即使不用 Compose 也不会把资料写进镜像层。
 - Linux 宿主机上容器以 UID 10001 运行；如果 `./data` 属于别的用户，会写不进去，
   可执行 `sudo chown -R 10001:10001 ./data`，或改用命名卷。
-- 向量检索是可选通道：默认走纯词法 BM25，不挂模型也能跑。需要 `--dense` / `--hybrid` 时，
+- 向量检索是可选通道：默认走纯词法 BM25，不加载模型亦可运行。需要 `--dense` / `--hybrid` 时，
   把本地 `models/` 只读挂到容器（Compose 文件里已留注释行）。
 
 ### 健康检查
@@ -383,9 +358,9 @@ docker run --rm -p 8017:8017 \
   Settings → Docker Engine 里配置 `registry-mirrors`（例如所在网络可用的国内加速地址），
   或先 `docker pull <可用镜像源>/library/python:3.11-slim` 再 `docker tag` 成 `python:3.11-slim`。
   注意 `registry-mirrors` 只作用于 Docker Hub，不会自动加速 ghcr.io 等其他 registry ——
-  这也是 Dockerfile 选择 `pip install uv`、而不是从 ghcr.io 拷 uv 二进制的原因。
+  这也是 Dockerfile 用 `pip install uv` 装 uv 的原因。
 - **依赖下载失败或太慢**：构建时默认用清华源；可覆盖：
-  `docker build --build-arg PYPI_INDEX_URL=https://<你的镜像>/simple -t research-agent-api:local .`。
+  `docker build --build-arg PYPI_INDEX_URL=https://<镜像源地址>/simple -t research-agent-api:local .`。
   `uv.lock` 记录了清华源的下载地址；Dockerfile 检测到 `PYPI_INDEX_URL` 与锁文件不一致时，
   会自动改为重新解析依赖（默认清华源路径仍严格按锁文件安装，保持可复现）。
 - **接口返回 `degraded=true` 或提示缺少 key**：先确认 `.env` 存在并被注入
@@ -400,34 +375,3 @@ docker run --rm -p 8017:8017 \
 `models/`（约 128MB）、`pdf/`、`data/`、`.git`、`__pycache__`、`.env` 均由 `.dockerignore` 排除。
 依赖里刻意没有 torch，主要体积来自 onnxruntime、numpy、pymupdf，预计未压缩约 250–350MB
 （实际以 `docker images` 为准；本次未构建验证）。
-
-## 团队与许可
-
-| 项 | 内容 |
-|---|---|
-| 参赛者 | 〈待填：姓名〉 |
-| 学校 / 院系 | 〈待填〉 |
-| 联系方式 | 〈待填：邮箱〉 |
-| 赛项 | 「智领科研·意图驱动：基于大模型与 Agent 架构的全流程科研助手构建挑战赛」（个人赛 · 作品题） |
-
-**许可**：[MIT](LICENSE)。选它而不是 Apache-2.0，理由是不涉及专利布局，而 MIT 的
-"保留版权声明即可自由使用"对评审与后续使用者都最省事；Apache-2.0 多出的专利授权与
-"改动须说明"义务在这个规模上没有实际收益。
-
-### 发布前的安全检查（2026-11-14 实测）
-
-| 检查 | 结果 |
-|---|---|
-| `.env` 是否进过仓库 | 从未 —— 全历史里只有 `.env.example` |
-| 像密钥的字面量（`sk-…` / `AKIA…`） | 工作区与**全部提交**均为 0 处 |
-| 演示 PDF / 模型 / `data/` | 均未跟踪（`.gitignore` 生效，约 43 MB 不进仓库） |
-| 仓库体积 | 224 个文件 / 14 MB，最大单文件 `uv.lock` 332 KB |
-
-复现（复制粘贴即可，不需要任何领域知识）：
-
-```bash
-git ls-files | grep -E '^\.env$' || echo "没跟踪 .env"                 # 应打印「没跟踪 .env」
-git grep -lIE 'sk-[A-Za-z0-9]{20,}' $(git rev-list --all) | wc -l      # 应为 0
-git ls-files | wc -l                                                   # 224
-git ls-files -z | xargs -0 du -ch 2>/dev/null | tail -1                # 14M  total
-```

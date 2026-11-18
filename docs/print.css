@@ -19,11 +19,11 @@
  *   中文字体也由系统提供，不用配 CJK 宏包。
  */
 
-@page { size: A4; margin: 15mm 14mm; }
+@page { size: A4; margin: 14mm 13mm; }
 
 body {
   font-family: "PingFang SC", "Microsoft YaHei", "Source Han Sans SC", system-ui, sans-serif;
-  font-size: 10.5pt; line-height: 1.65; color: #16202c; max-width: none;
+  font-size: 10pt; line-height: 1.55; color: #16202c; max-width: none;
 }
 
 /* pandoc 会把 --metadata title 渲染成一个大标题；文档本身已有 H1，藏掉避免重复 */
