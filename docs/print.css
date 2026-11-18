@@ -23,34 +23,46 @@
 
 body {
   font-family: "PingFang SC", "Microsoft YaHei", "Source Han Sans SC", system-ui, sans-serif;
-  font-size: 10pt; line-height: 1.55; color: #16202c; max-width: none;
+  font-size: 10pt; line-height: 1.5; color: #000; max-width: none;
 }
 
 /* pandoc 会把 --metadata title 渲染成一个大标题；文档本身已有 H1，藏掉避免重复 */
 header#title-block-header { display: none; }
 
-h1 { font-size: 20pt; border-bottom: 2px solid #2a78d6; padding-bottom: 6px; margin-top: 0; }
-h2 { font-size: 14pt; margin-top: 18pt; page-break-after: avoid; color: #123c66; }
+h1 { font-size: 20pt; text-align: center; border-bottom: 0; padding-bottom: 0; margin-top: 0; }
+h2 { font-size: 14pt; margin-top: 15pt; page-break-after: avoid; color: #000; }
 h3 { font-size: 11.5pt; margin-top: 12pt; page-break-after: avoid; }
 
-table { border-collapse: collapse; width: 100%; font-size: 8.6pt; margin: 7pt 0; page-break-inside: avoid; }
-th, td { border: 1px solid #c8d0d8; padding: 2px 5px; text-align: left; vertical-align: top; }
-th { background: #eef3f9; font-weight: 700; }
+table { border-collapse: collapse; width: 100%; font-size: 8.3pt; margin: 6pt 0; page-break-inside: avoid; }
+th, td { border: 1px solid #999; padding: 1.5px 4px; text-align: left; vertical-align: top; }
+th { background: #eee; font-weight: 700; }
 
-code { background: #f1f4f8; padding: 1px 4px; border-radius: 3px; font-size: 9pt; }
+code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 9pt; color: #000; }
 pre {
-  background: #f6f8fa; border: 1px solid #e2e8ee; border-radius: 5px;
+  background: #f7f7f7; border: 1px solid #ccc; border-radius: 0;
   padding: 8px 10px; font-size: 8.5pt; line-height: 1.45;
   overflow: hidden; page-break-inside: avoid;
 }
 
 blockquote {
-  margin: 8pt 0; padding: 6px 12px;
-  border-left: 3px solid #2a78d6; background: #f5f8fc; color: #2b3947;
+  margin: 8pt 0; padding: 0;
+  border: 0; background: none; color: #000;
 }
 
-hr { border: 0; border-top: 1px solid #dde4ea; margin: 14pt 0; }
+hr { border: 0; border-top: 1px solid #bbb; margin: 14pt 0; }
 
 /* 截图：整幅宽度、不跨页断开，图注紧跟图下方且不单独落到下一页 */
-img { max-width: 94%; height: auto; display: block; margin: 7pt auto 3pt; page-break-inside: avoid; }
-img + em, p > em:only-child { display: block; font-size: 8.5pt; color: #4a5a6a; margin: 0 0 10pt; }
+img { max-width: 88%; height: auto; display: block; margin: 6pt auto 2pt; page-break-inside: avoid; }
+img + em, p > em:only-child { display: block; font-size: 8.5pt; color: #333; margin: 0 0 10pt; }
+
+/* 目录：单列两栏对齐，不加任何框线；页码靠右 */
+.toc { font-size: 8.2pt; line-height: 1.26; margin: 3pt 0 5pt; }
+.toc .row { display: flex; align-items: baseline; }
+.toc .row .t { flex: 1; white-space: nowrap; overflow: hidden; }
+.toc .row .p { flex: none; margin-left: 8pt; }
+.toc .row.l3 { padding-left: 14pt; font-size: 7.9pt; }
+
+a { color: #000; text-decoration: none; }
+
+/* 架构图占满版心：图内文字要能看清，缩到 88% 会把字号压到 5pt */
+img.wide { max-width: 100%; }

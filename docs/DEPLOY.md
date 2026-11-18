@@ -109,6 +109,35 @@ OCR、图表解析照常工作。演示要完整效果就填上。
 Semantic Scholar 不带 key 也能查，但公共配额全站共享，从机房 IP 出去几乎必然
 拿到 429（本机实测 5 站里就它一格红）。免费注册，填上之后是 1 次/秒的专属配额。
 
+### 密钥放在哪、怎么让它生效
+
+密钥只存在于 `.env` 这一个文件里。代码在启动时由 `app/config.py` 读进环境变量
+（`os.environ.setdefault`，即 shell 里已设的同名变量优先），此后不再重读 —— 所以
+**改完必须重启进程**。
+
+| 场景 | 文件位置 | 生效命令 |
+|---|---|---|
+| 本地开发 | 仓库根 `.env` | 重启 `uvicorn`（`--reload` 不会重读 `.env`） |
+| 本地 Docker | 仓库根 `.env`（Compose 通过 `env_file` 注入） | `docker compose up -d --force-recreate api` |
+| 服务器 | `/root/research-agent/.env` | `cd /root/research-agent && docker compose up -d --force-recreate api` |
+
+服务器上改密钥的完整过程：
+
+```bash
+ssh root@101.37.190.214            # 登录
+nano /root/research-agent/.env     # 把 DEEPSEEK_API_KEY= 后面填上真实值，Ctrl+O 保存、Ctrl+X 退出
+cd /root/research-agent && docker compose up -d --force-recreate api   # 重建容器
+curl -s http://127.0.0.1:8017/api/health                               # 确认 "llm_configured": true
+```
+
+三条约束：
+
+- `.env` 已在 `.gitignore`；`scripts/deploy_remote.sh` 打包时**显式排除** `.env`，
+  服务器上那份是部署脚本从 `.env.example` 生成的空壳，**不会被本机的 `.env` 覆盖**；
+- 不要把密钥写进 `Dockerfile`、不要 `COPY` 进镜像、不要提交到仓库 —— 镜像层里的
+  内容对任何能 `docker history` 的人都可见；
+- 密钥来源：`https://platform.deepseek.com` 的 API keys 页面。
+
 ## 5. 起服务
 
 ```bash
