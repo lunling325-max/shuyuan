@@ -261,7 +261,7 @@ Q&A 的"编造引用必须被丢弃"、HTTP 层的降级与去重、重启后资
 
 | 文件 | 内容 |
 |---|---|
-| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 16 张实机截图与创新点说明（PDF 30 页，正好压在上限，`build/TECH.pdf`） |
+| [`docs/TECH.md`](docs/TECH.md) | 技术文档正文：架构、五个关键技术、评测、局限性；含 16 张图（15 张实机截图 + 1 张系统架构图）与创新点说明（PDF 28 页，`build/技术文档.pdf`） |
 | [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) | 60 篇实验记录（E-001–E-060），每条带实测数字 |
 | [`docs/PLAN.md`](docs/PLAN.md) | 设计与取舍记录：原计划砍掉了什么、为什么 |
 | [`docs/DEFENSE.md`](docs/DEFENSE.md) | **答辩问答准备**：十二个会被问到的问题，每题给一句话答案 + 追问准备 + 数字出处，另附三个"不要答"的坑 |
